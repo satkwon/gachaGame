@@ -1,0 +1,11 @@
+# Local anime art generation (Apple Silicon / MPS).
+# Install into an isolated env, e.g.:
+#   conda create -y -n artgen python=3.11
+#   conda run -n artgen pip install -r scripts/requirements.txt
+torch
+torchvision
+diffusers>=0.39
+transformers
+accelerate
+safetensors
+peft

@@ -1,0 +1,119 @@
+[
+  {
+    "element": "Cryo",
+    "id": "yukihana",
+    "kind": "character",
+    "look": "1girl, solo, very long straight white hair, pale blue eyes, hair ornament, elegant ornate white and ice-blue dress, gold filigree trim, detached sleeves, holding a glowing crystalline ice sword, falling snow, calm serious expression",
+    "name": "Yukihana",
+    "rarity": 5,
+    "weapon": "Sword"
+  },
+  {
+    "element": "Pyro",
+    "id": "guren",
+    "kind": "character",
+    "look": "1girl, solo, long crimson red hair, black inner hair, amber eyes, flowing red and gold kimono dress, gold hair ornaments, detached sleeves, a floating flaming lotus of magic beside her, fire particles, confident smile",
+    "name": "Guren",
+    "rarity": 5,
+    "weapon": "Catalyst"
+  },
+  {
+    "element": "Electro",
+    "id": "yozora",
+    "kind": "character",
+    "look": "1girl, solo, very long purple hair, twintails, glowing violet eyes, star hair ornament, indigo and starlight themed outfit, constellation patterns, holding a glowing electro energy bow, night sky, electric sparks",
+    "name": "Yozora",
+    "rarity": 5,
+    "weapon": "Bow"
+  },
+  {
+    "element": "Hydro",
+    "id": "celestine",
+    "kind": "character",
+    "look": "1girl, solo, long flowing teal hair, blue eyes, elegant pale blue water-themed dress, pearl accents, holding a shimmering blade of water, water splashes, serene expression",
+    "name": "Celestine",
+    "rarity": 5,
+    "weapon": "Sword"
+  },
+  {
+    "element": null,
+    "id": "celestial_edge",
+    "kind": "weapon",
+    "look": "an ornate celestial longsword, glowing blue-white blade, star and constellation motifs, golden hilt with gemstone, radiant particles",
+    "name": "Celestial Edge",
+    "rarity": 5,
+    "weapon": "Sword"
+  },
+  {
+    "element": "Hydro",
+    "id": "mizuki",
+    "kind": "character",
+    "look": "1girl, solo, blue hair, high ponytail, blue eyes, blue and white sentinel uniform, holding a water polearm spear, rain, calm expression",
+    "name": "Mizuki",
+    "rarity": 4,
+    "weapon": "Polearm"
+  },
+  {
+    "element": "Anemo",
+    "id": "tsubaki",
+    "kind": "character",
+    "look": "1girl, solo, dark green hair, green eyes, elegant green duelist outfit, holding a slender sword, falling flower petals, poised stance",
+    "name": "Tsubaki",
+    "rarity": 4,
+    "weapon": "Sword"
+  },
+  {
+    "element": "Electro",
+    "id": "hotaru",
+    "kind": "character",
+    "look": "1girl, solo, short purple hair, bright purple eyes, small mage outfit with cape, floating glowing firefly lights, electric sparks, energetic expression",
+    "name": "Hotaru",
+    "rarity": 4,
+    "weapon": "Catalyst"
+  },
+  {
+    "element": null,
+    "id": "whispering_gale",
+    "kind": "weapon",
+    "look": "an ornate floating wind catalyst orb, teal and white, swirling wind currents, soft glow",
+    "name": "Whispering Gale",
+    "rarity": 4,
+    "weapon": "Catalyst"
+  },
+  {
+    "element": null,
+    "id": "ironwood_longbow",
+    "kind": "weapon",
+    "look": "an ornate wooden longbow, green and gold, carved leaf and vine motifs, soft glow",
+    "name": "Ironwood Longbow",
+    "rarity": 4,
+    "weapon": "Bow"
+  },
+  {
+    "element": null,
+    "id": "boulderbreaker",
+    "kind": "weapon",
+    "look": "an ornate massive stone greatsword claymore, brown and gold, rugged rocky texture, heavy",
+    "name": "Boulderbreaker",
+    "rarity": 4,
+    "weapon": "Claymore"
+  },
+  {
+    "element": null,
+    "id": "travelers_blade",
+    "kind": "weapon",
+    "look": "a simple plain steel longsword, leather-wrapped hilt, no ornamentation",
+    "name": "Traveler's Blade",
+    "rarity": 3,
+    "weapon": "Sword"
+  },
+  {
+    "element": null,
+    "id": "hunters_bow",
+    "kind": "weapon",
+    "look": "a simple plain wooden hunting bow, worn leather grip",
+    "name": "Hunter's Bow",
+    "rarity": 3,
+    "weapon": "Bow"
+  }
+]

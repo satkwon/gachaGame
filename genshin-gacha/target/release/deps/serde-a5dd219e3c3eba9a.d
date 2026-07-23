@@ -1,0 +1,14 @@
+/Users/nathankwon/clauding/genshin-gacha/target/release/deps/serde-a5dd219e3c3eba9a.d: /Users/nathankwon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/lib.rs /Users/nathankwon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/integer128.rs /Users/nathankwon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/mod.rs /Users/nathankwon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/de.rs /Users/nathankwon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/ser.rs /Users/nathankwon/clauding/genshin-gacha/target/release/build/serde-7ce0ca8db6ea95a9/out/private.rs
+
+/Users/nathankwon/clauding/genshin-gacha/target/release/deps/libserde-a5dd219e3c3eba9a.rlib: /Users/nathankwon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/lib.rs /Users/nathankwon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/integer128.rs /Users/nathankwon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/mod.rs /Users/nathankwon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/de.rs /Users/nathankwon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/ser.rs /Users/nathankwon/clauding/genshin-gacha/target/release/build/serde-7ce0ca8db6ea95a9/out/private.rs
+
+/Users/nathankwon/clauding/genshin-gacha/target/release/deps/libserde-a5dd219e3c3eba9a.rmeta: /Users/nathankwon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/lib.rs /Users/nathankwon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/integer128.rs /Users/nathankwon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/mod.rs /Users/nathankwon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/de.rs /Users/nathankwon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/ser.rs /Users/nathankwon/clauding/genshin-gacha/target/release/build/serde-7ce0ca8db6ea95a9/out/private.rs
+
+/Users/nathankwon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/lib.rs:
+/Users/nathankwon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/integer128.rs:
+/Users/nathankwon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/mod.rs:
+/Users/nathankwon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/de.rs:
+/Users/nathankwon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/ser.rs:
+/Users/nathankwon/clauding/genshin-gacha/target/release/build/serde-7ce0ca8db6ea95a9/out/private.rs:
+
+# env-dep:OUT_DIR=/Users/nathankwon/clauding/genshin-gacha/target/release/build/serde-7ce0ca8db6ea95a9/out
