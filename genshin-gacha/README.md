@@ -25,23 +25,44 @@ cd path/to/genshin-gacha
 cargo run --release
 ```
 
-Navigate the menu with number keys. During a wish, **space** advances and
-**esc** skips to the results. Any terminal works, but only Ghostty (or Kitty /
-WezTerm) shows the inline art — elsewhere you still get the full animation.
+Everything is driven by **buttons**: use **↑ ↓** (or j/k) to move the highlight,
+**enter** to select, **esc** to go back, or press an option's **number**. During
+a wish, **space** advances and **esc** skips to the results. Any terminal works,
+but only Ghostty (or Kitty / WezTerm) shows the inline art.
 
 ## The banners
 
-Three limited banners, each headlining an original 5-star:
+Five limited banners, each headlining an original 5-star:
 
 | Banner | 5★ (limited) | Element · Weapon | Rate-up 4★ |
 |---|---|---|---|
 | **Snowfall Elegy** | **Yukihana** — *Blade of the First Snow* | Cryo · Sword | Mizuki, Tsubaki, Hotaru |
 | **Everblaze Reverie** | **Guren** — *The Ember Sovereign* | Pyro · Catalyst | Mizuki, Tsubaki, Hotaru |
 | **Starfall Nocturne** | **Yozora** — *The Midnight Star* | Electro · Bow | Mizuki, Tsubaki, Hotaru |
+| **Verdant Reverie** | **Reika** — *The Verdant Oracle* | Dendro · Catalyst | Kogane, Shizuku, Mizuki |
+| **Nocturne Requiem** | **Kuroha** — *Nocturne of Black Feathers* | Anemo · Catalyst | Kagerou, Seren, Tsubaki |
 
 The standard pool — 5★ character **Celestine**, 5★ weapon **Celestial Edge**,
 three 4★ weapons and two 3★ weapons — fills the losing half of the 50/50.
-Thirteen items in all: 7 characters, 6 weapons.
+Thirteen characters and six weapons in all.
+
+## Battle
+
+The **Battle** menu runs a **2v2 (VGC-style)** turn-based fight: pick two of your
+characters, pick two classic-fantasy foes (slime, goblin, skeleton, flame imp,
+frost wraith, and a shadow-dragon boss), all shown with pixel sprites that
+**bounce when they attack**.
+
+- **Team select** — space to toggle each pick, enter to confirm.
+- **Per-turn** — choose a move for each living hero, then a target; all four
+  combatants act in speed order.
+- **HP + MP** — special moves cost MP; every character has a Strike, an elemental
+  special, an elemental skill, and a self-heal (Mend).
+- **Type chart** — elements are strong/weak against each other (e.g. Pyro melts
+  Cryo). "Super effective" hits ×1.5.
+- **Status effects** — Burn (damage + weakened attack), Poison (damage each
+  turn), Freeze (may skip a turn), Paralyze (slowed, may skip).
+- Wipe the enemy team to earn primogems (the sum of both foes' bounties).
 
 ## The mechanics (identical to Genshin)
 
@@ -125,10 +146,10 @@ verbatim — ids are the first field of each `src/data.rs` entry.
 ## Other commands
 
 ```
-cargo run --release                 launch the simulator
+cargo run --release                 launch the game
 cargo run --release -- --simulate N [banner-id]   headless odds check
+cargo run --release -- --battle-sim [hero] [foe]  headless battle test
 cargo run --release -- --export-prompts           dump art prompts as JSON
-cargo run --release -- --dump-art [dir]           write fallback cards to PNG
 cargo run --release -- --dump-pixels [dir]        write pixel-art sprites to PNG
 cargo run --release -- --help
 ```
@@ -145,7 +166,9 @@ src/gacha.rs     the wish engine (odds, pity, 50/50, radiance)
 src/save.rs      persistence, currency
 src/graphics.rs  Kitty/Ghostty image protocol
 src/art.rs       asset loading, pixel-art sprites, fallback card
-src/anim.rs      animations, reveals, cutscene, collection gallery
-src/main.rs      menus and the wish flow
+src/anim.rs      animations, reveals, cutscene, gallery, battle UI
+src/battle.rs    turn-based battle logic (moves, status, type chart, enemies)
+src/ui.rs        widget toolkit — button menus, message boxes
+src/main.rs      the app: menus, wish flow, battle flow
 scripts/         local anime-model art generation (Python/Diffusers)
 ```

@@ -39,7 +39,18 @@ NEG_BASE = (
     "watermark, signature, username, text, logo, error, blurry, nsfw, nude, "
     "explicit, revealing clothes"
 )
-NEG_WEAPON = NEG_BASE + ", 1girl, 1boy, person, human, face, hands"
+# Weapons must be exactly ONE object — SDXL loves to make variation sheets, so
+# the plural terms are heavily negated and the framing avoids "concept art".
+NEG_WEAPON = (
+    NEG_BASE
+    + ", 1girl, 1boy, person, human, face, hands, character, "
+    + "multiple weapons, two weapons, three weapons, four weapons, many weapons, "
+    + "row of weapons, weapons in a row, side by side, lineup, collection, set, "
+    + "variations, reference sheet, design sheet, chart, grid, pair, duplicate, "
+    + "group, several objects, weapon rack, multiple views, "
+    + "arrow through the bow, arrow passing through bow, arrow in center of bow, "
+    + "bow without string, stringless bow, multiple arrows"
+)
 
 
 def seed_for(item_id: str) -> int:
@@ -48,17 +59,35 @@ def seed_for(item_id: str) -> int:
 
 def build(item):
     # Keep prompts within CLIP's 77-token window; `look` carries the identity,
-    # so lead with short quality/framing tags and let `look` follow.
+    # so lead with short framing tags and let `look` follow.
     look = item["look"]
     if item["kind"] == "character":
         prompt = f"{QUALITY}, safe, anime splash art, cinematic lighting, {look}"
         return prompt, NEG_BASE
-    prompt = f"{QUALITY}, item concept art, plain dark background, {look}, no humans"
+    # Weapon: force exactly ONE item of the CORRECT type. Lead with an explicit
+    # shape hint (the type name alone renders bows as sticks), then the look.
+    shape = {
+        "Sword": "a single straight one-handed sword with a cross-guard hilt",
+        "Claymore": "a single massive two-handed greatsword, very large wide heavy blade",
+        "Polearm": "a single long polearm spear, bladed tip on a long shaft",
+        "Bow": (
+            "a single curved archery bow held vertically with a taut visible "
+            "bowstring, one arrow nocked and resting against the side of the bow, "
+            "arrow off to the side not passing through the bow, clear recurve bow shape"
+        ),
+        "Catalyst": "a single floating magical catalyst",
+    }.get(item.get("weapon", ""), f"a single {item.get('weapon','weapon')}")
+    prompt = (
+        f"solo, {shape}, only one weapon, one object, centered, "
+        f"isolated on plain dark gradient background, no humans, {QUALITY}, {look}"
+    )
     return prompt, NEG_WEAPON
 
 
 def main():
     items = json.loads(PROMPTS.read_text())
+    # Enemies get pixel sprites only (generate_pixel.py), not splashes.
+    items = [i for i in items if i["kind"] != "enemy"]
     wanted = set(sys.argv[1:])
     if wanted:
         items = [i for i in items if i["id"] in wanted]

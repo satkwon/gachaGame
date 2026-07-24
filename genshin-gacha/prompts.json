@@ -36,6 +36,24 @@
     "weapon": "Sword"
   },
   {
+    "element": "Dendro",
+    "id": "reika",
+    "kind": "character",
+    "look": "1girl, solo, very long green hair, golden eyes, ornate white and green oracle robe, gold leaf hair ornament, floating glowing spellbook, swirling green leaves, serene wise smile",
+    "name": "Reika",
+    "rarity": 5,
+    "weapon": "Catalyst"
+  },
+  {
+    "element": "Anemo",
+    "id": "kuroha",
+    "kind": "character",
+    "look": "1girl, solo, very long black hair with silver streaks, heterochromia, one crimson eye and one golden eye, elegant gothic black and violet dress, black feather and wing motifs, holding an ornate dark grimoire, floating black feathers, cool elegant expression",
+    "name": "Kuroha",
+    "rarity": 5,
+    "weapon": "Catalyst"
+  },
+  {
     "element": null,
     "id": "celestial_edge",
     "kind": "weapon",
@@ -68,6 +86,42 @@
     "kind": "character",
     "look": "1girl, solo, short purple hair, bright purple eyes, small mage outfit with cape, floating glowing firefly lights, electric sparks, energetic expression",
     "name": "Hotaru",
+    "rarity": 4,
+    "weapon": "Catalyst"
+  },
+  {
+    "element": "Geo",
+    "id": "kogane",
+    "kind": "character",
+    "look": "1girl, solo, short golden blonde hair, amber eyes, ornate gold and brown plate armor, holding a massive golden greatsword, confident grin",
+    "name": "Kogane",
+    "rarity": 4,
+    "weapon": "Claymore"
+  },
+  {
+    "element": "Cryo",
+    "id": "shizuku",
+    "kind": "character",
+    "look": "1girl, solo, pale blue hair in a braid, blue eyes, white and cyan winter dress, holding a crystalline ice spear, falling snow, calm cool expression",
+    "name": "Shizuku",
+    "rarity": 4,
+    "weapon": "Polearm"
+  },
+  {
+    "element": "Pyro",
+    "id": "kagerou",
+    "kind": "character",
+    "look": "1girl, solo, orange and white hair, fox ears, a white kitsune fox mask worn on the side of her head, red and white kimono, holding a flaming katana, foxfire embers, playful sharp grin",
+    "name": "Kagerou",
+    "rarity": 4,
+    "weapon": "Sword"
+  },
+  {
+    "element": "Geo",
+    "id": "seren",
+    "kind": "character",
+    "look": "1girl, solo, teal hair in a bun, monocle, brass and teal steampunk engineer outfit, clockwork gear motifs, a floating brass gear-orb catalyst, mechanical gear halo, curious clever expression",
+    "name": "Seren",
     "rarity": 4,
     "weapon": "Catalyst"
   },
@@ -115,5 +169,53 @@
     "name": "Hunter's Bow",
     "rarity": 3,
     "weapon": "Bow"
+  },
+  {
+    "element": "Dendro",
+    "id": "enemy_slime",
+    "kind": "enemy",
+    "look": "a cute round green slime monster, glossy translucent body, big simple eyes, small and squishy",
+    "name": "Verdant Slime",
+    "rarity": 4
+  },
+  {
+    "element": "Geo",
+    "id": "enemy_goblin",
+    "kind": "enemy",
+    "look": "a small green-skinned goblin, pointy ears, sharp teeth, tattered leather armor, wielding a crude wooden club, menacing grin",
+    "name": "Goblin Raider",
+    "rarity": 4
+  },
+  {
+    "element": "Cryo",
+    "id": "enemy_skeleton",
+    "kind": "enemy",
+    "look": "an undead skeleton warrior, glowing blue eye sockets, rusted iron sword and round shield, tattered cloak",
+    "name": "Skeleton Knight",
+    "rarity": 4
+  },
+  {
+    "element": "Pyro",
+    "id": "enemy_flame_imp",
+    "kind": "enemy",
+    "look": "a small red fire imp demon, little curved horns, pointed tail, hands wreathed in flame, mischievous grin",
+    "name": "Flame Imp",
+    "rarity": 4
+  },
+  {
+    "element": "Cryo",
+    "id": "enemy_frost_wraith",
+    "kind": "enemy",
+    "look": "a ghostly floating frost wraith, tattered pale-blue robes, hollow glowing eyes, icy skeletal claws, drifting cold mist",
+    "name": "Frost Wraith",
+    "rarity": 4
+  },
+  {
+    "element": "Electro",
+    "id": "enemy_shadow_dragon",
+    "kind": "enemy",
+    "look": "a large black shadow dragon, glowing violet eyes, vast tattered wings, crackling dark-purple energy, fearsome and imposing",
+    "name": "Shadow Dragon",
+    "rarity": 5
   }
 ]

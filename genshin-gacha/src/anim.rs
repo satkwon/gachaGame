@@ -11,6 +11,8 @@ use crossterm::terminal::{self, Clear, ClearType};
 use crossterm::{cursor, queue};
 
 use crate::art;
+use crate::battle::{self, Battler, Enemy, Outcome};
+use crate::fx;
 use crate::gacha::WishOutcome;
 use crate::graphics;
 use crate::model::{Item, Rarity, Rgb};
@@ -205,9 +207,42 @@ impl Stage {
 
     // ---- public sequence --------------------------------------------------
 
-    /// The shared build-up: night sky, a streaking star, and a burst that
-    /// flashes the colour of the *best* pull in the batch — the anticipation.
+    /// The shared build-up. Uses the rendered 3D cinematic on graphics-capable
+    /// terminals, falling back to the ASCII star sequence elsewhere.
     pub fn build_up(&mut self, best: Rarity) {
+        if self.graphics {
+            self.build_up_cinematic(best);
+        } else {
+            self.build_up_ascii(best);
+        }
+    }
+
+    /// Software-rendered 3D warp + rarity burst, blitted frame-by-frame. Frames
+    /// are cached per rarity, so only the first wish of a session renders them.
+    fn build_up_cinematic(&mut self, best: Rarity) {
+        let frames = fx::wish_cinematic_cached(best);
+        self.clear_all();
+        let (cols, rows) = (self.w, self.h);
+        // The burst begins around 72% through; ring the bell there for 5-stars.
+        let bell_at = frames.len() * 3 / 4;
+        queue!(self.out, cursor::MoveTo(0, 0)).ok();
+        self.flush();
+        for (i, frame) in frames.iter().enumerate() {
+            // Same image id every frame → replaced in place (no accumulation).
+            graphics::draw_png_frame(&mut self.out, frame, cols, rows, 42).ok();
+            if best == Rarity::Five && i == bell_at {
+                self.bell_ring();
+            }
+            if self.nap(38) {
+                break;
+            }
+        }
+        self.nap(180);
+        graphics::clear(&mut self.out).ok();
+        self.clear_screen();
+    }
+
+    fn build_up_ascii(&mut self, best: Rarity) {
         let cx = self.w as f32 / 2.0;
         let cy = self.h as f32 / 2.0;
 
@@ -749,5 +784,448 @@ impl Stage {
         self.flush();
         self.drain_input();
         self.read_key();
+    }
+
+    // ---- battle ----------------------------------------------------------
+
+    /// Interruptible pause used between battle messages (any key advances).
+    fn beat(&mut self, ms: u64) {
+        let dur = Duration::from_millis(if self.fast { ms / 2 } else { ms });
+        let start = Instant::now();
+        while start.elapsed() < dur {
+            let remain = dur - start.elapsed();
+            if event::poll(remain.min(Duration::from_millis(30))).unwrap_or(false) {
+                if let Ok(Event::Key(_)) = event::read() {
+                    return;
+                }
+            }
+        }
+    }
+
+    fn fill(&mut self, col: u16, row: u16, width: u16, count: u16) {
+        let blank = " ".repeat(width as usize);
+        for r in 0..count {
+            self.text(col, row + r, &blank, Rgb::new(0, 0, 0));
+        }
+    }
+
+    fn bar(&mut self, col: u16, row: u16, label: &str, cur: i32, max: i32, width: u16, color: Rgb) {
+        let cur = cur.max(0);
+        let filled = if max > 0 {
+            ((cur * width as i32) / max).clamp(0, width as i32) as usize
+        } else {
+            0
+        };
+        let gauge: String = "█".repeat(filled) + &"░".repeat(width as usize - filled);
+        let lw = label.chars().count() as u16;
+        self.text(col, row, label, Rgb::new(205, 210, 225));
+        self.text(col + lw, row, &gauge, color);
+        self.text(col + lw + width + 1, row, &format!("{cur}/{max}"), Rgb::new(205, 210, 225));
+    }
+
+    fn draw_battler_sprite(&mut self, png: Option<&[u8]>, col: u16, row: u16, cols: u16, rows: u16, accent: Rgb) {
+        if self.graphics {
+            if let Some(bytes) = png {
+                queue!(self.out, cursor::MoveTo(col, row)).ok();
+                self.flush();
+                graphics::draw_png(&mut self.out, bytes, cols, rows).ok();
+                return;
+            }
+        }
+        let border = "─".repeat(cols as usize - 2);
+        self.text(col, row, &format!("┌{}┐", border), accent);
+        for r in 1..rows - 1 {
+            self.text(col, row + r, &format!("│{}│", " ".repeat(cols as usize - 2)), accent.scale(0.6));
+        }
+        self.text(col, row + rows - 1, &format!("└{}┘", border), accent);
+        self.text_span(col, cols, row + rows / 2, "?", accent);
+    }
+
+    /// Compact info box for one battler (used ×4 in a 2v2).
+    fn draw_info(&mut self, b: &Battler, col: u16, row: u16, mp: bool) {
+        self.fill(col, row, 24, if mp { 3 } else { 2 });
+        let name_col = if b.alive() { Rgb::new(240, 240, 250) } else { Rgb::new(120, 120, 132) };
+        self.text(col, row, &b.name, name_col);
+        let nx = col + b.name.chars().count() as u16 + 1;
+        if !b.alive() {
+            self.text(nx, row, "DOWN", Rgb::new(200, 90, 90));
+        } else if let Some(s) = b.status {
+            self.text(nx, row, &format!("[{}]", s.tag()), s.color());
+        } else {
+            self.text(nx, row, b.element.name(), b.element.color());
+        }
+        let hp_col = if b.hp * 2 > b.max_hp {
+            Rgb::new(110, 210, 120)
+        } else if b.hp * 5 > b.max_hp {
+            Rgb::new(230, 200, 90)
+        } else {
+            Rgb::new(230, 100, 90)
+        };
+        self.bar(col, row + 1, "HP ", b.hp, b.max_hp, 10, hp_col);
+        if mp {
+            self.bar(col, row + 2, "MP ", b.mp, b.max_mp, 10, Rgb::new(110, 170, 240));
+        }
+    }
+
+    fn battle_message(&mut self, msg: &str, row: u16) {
+        self.fill(0, row, self.w, 1);
+        self.text(2, row, msg, Rgb::new(235, 235, 245));
+        self.flush();
+    }
+
+    /// Horizontal button chooser drawn on one row. Esc → None.
+    fn hchoose(&mut self, options: &[&str], row: u16) -> Option<usize> {
+        let mut sel = 0usize;
+        loop {
+            self.fill(0, row, self.w, 1);
+            let bw = 12u16;
+            let total = bw * options.len() as u16 + 2 * (options.len() as u16 - 1);
+            let mut x = self.w.saturating_sub(total) / 2;
+            for (i, opt) in options.iter().enumerate() {
+                self.button_cell(x, row, bw, opt, i == sel, true);
+                x += bw + 2;
+            }
+            self.flush();
+            match self.read_key() {
+                KeyCode::Left | KeyCode::Char('h') => sel = if sel == 0 { options.len() - 1 } else { sel - 1 },
+                KeyCode::Right | KeyCode::Char('l') => sel = (sel + 1) % options.len(),
+                KeyCode::Enter | KeyCode::Char(' ') => return Some(sel),
+                KeyCode::Esc => return None,
+                _ => {}
+            }
+        }
+    }
+
+    fn button_cell(&mut self, col: u16, row: u16, width: u16, label: &str, selected: bool, enabled: bool) {
+        let pad = (width as usize).saturating_sub(label.chars().count()) / 2;
+        let text = format!(
+            "{}{}{}",
+            " ".repeat(pad),
+            label,
+            " ".repeat((width as usize).saturating_sub(pad + label.chars().count()))
+        );
+        if selected {
+            queue!(
+                self.out,
+                cursor::MoveTo(col, row),
+                crossterm::style::SetBackgroundColor(Rgb::new(255, 208, 92).crossterm()),
+                SetForegroundColor(Rgb::new(20, 20, 28).crossterm()),
+                Print(text),
+                crossterm::style::ResetColor
+            )
+            .ok();
+        } else {
+            let fg = if enabled { Rgb::new(228, 230, 240) } else { Rgb::new(110, 116, 135) };
+            self.text(col, row, &text, fg);
+        }
+    }
+
+    /// 2×2 move grid. Returns Some(index) or None (back).
+    fn move_select(&mut self, player: &Battler, msg_row: u16) -> Option<usize> {
+        let mut sel = 0usize;
+        let r1 = self.h - 3;
+        let r2 = self.h - 2;
+        let bw = 22u16;
+        let ax = self.w.saturating_sub(bw * 2 + 3) / 2;
+        let bx = ax + bw + 3;
+        loop {
+            self.fill(0, r1, self.w, 2);
+            for i in 0..4 {
+                let mv = &player.moves[i];
+                let afford = player.mp >= mv.mp;
+                let label = format!("{}  {}MP", mv.name, mv.mp);
+                let (x, y) = match i {
+                    0 => (ax, r1),
+                    1 => (bx, r1),
+                    2 => (ax, r2),
+                    _ => (bx, r2),
+                };
+                self.button_cell(x, y, bw, &label, i == sel, afford);
+            }
+            // Move info line.
+            let mv = &player.moves[sel];
+            let info = if mv.power > 0 {
+                format!("{}  ·  power {}  ·  {} MP", mv.element.name(), mv.power, mv.mp)
+            } else {
+                format!("{}  ·  support  ·  {} MP", mv.element.name(), mv.mp)
+            };
+            self.battle_message(&info, msg_row);
+            self.flush();
+            match self.read_key() {
+                KeyCode::Left | KeyCode::Right | KeyCode::Char('h') | KeyCode::Char('l') => {
+                    sel ^= 1;
+                }
+                KeyCode::Up | KeyCode::Down | KeyCode::Char('k') | KeyCode::Char('j') => {
+                    sel ^= 2;
+                }
+                KeyCode::Enter | KeyCode::Char(' ') => {
+                    if player.mp >= player.moves[sel].mp {
+                        return Some(sel);
+                    }
+                }
+                KeyCode::Esc => return None,
+                _ => {}
+            }
+        }
+    }
+
+    /// Place/replace a battle sprite at a cell position (same image id → moves
+    /// in place, which powers the attack bounce).
+    fn blit_sprite(&mut self, png: &[u8], col: u16, row: u16, cols: u16, rows: u16, id: u32) {
+        if self.graphics {
+            queue!(self.out, cursor::MoveTo(col, row)).ok();
+            self.flush();
+            graphics::draw_png_frame(&mut self.out, png, cols, rows, id).ok();
+        }
+    }
+
+    /// A quick attack lunge: hop the sprite toward the enemy and back.
+    fn bounce(&mut self, png: Option<&[u8]>, col: u16, row: u16, cols: u16, rows: u16, id: u32, dir: i32) {
+        if let Some(bytes) = png {
+            if self.graphics {
+                let hop = (row as i32 + dir * 2).clamp(0, self.h as i32 - 1) as u16;
+                self.blit_sprite(bytes, col, hop, cols, rows, id);
+                self.beat(90);
+                self.blit_sprite(bytes, col, row, cols, rows, id);
+                self.beat(40);
+            }
+        }
+    }
+
+    fn render_team_info(
+        &mut self,
+        heroes: &[Battler],
+        foes: &[Battler],
+        hpos: &[(u16, u16)],
+        fpos: &[(u16, u16)],
+    ) {
+        for (i, b) in foes.iter().enumerate() {
+            self.draw_info(b, fpos[i].0, fpos[i].1, false);
+        }
+        for (i, b) in heroes.iter().enumerate() {
+            self.draw_info(b, hpos[i].0, hpos[i].1, true);
+        }
+        self.flush();
+    }
+
+    /// Choose a target among the alive foes (auto if only one).
+    fn target_select(&mut self, foes: &[Battler], alive: &[usize], msg_row: u16) -> usize {
+        if alive.len() == 1 {
+            return alive[0];
+        }
+        let names: Vec<String> = alive.iter().map(|&i| foes[i].name.clone()).collect();
+        let refs: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
+        self.battle_message("Choose a target", msg_row);
+        let sel = self.hchoose(&refs, self.h - 3).unwrap_or(0);
+        alive[sel.min(alive.len() - 1)]
+    }
+
+    /// Run a 2v2 (VGC-style) turn-based battle. Returns the outcome.
+    pub fn battle(&mut self, hero_items: &[&Item], foe_defs: &[&Enemy]) -> Outcome {
+        if self.w < 76 || self.h < 26 {
+            self.clear_all();
+            self.center(self.h / 2, "Please enlarge the terminal for 2v2 battles.", Rgb::new(235, 120, 120));
+            self.center(self.h / 2 + 2, "( press any key )", Rgb::new(140, 150, 170));
+            self.flush();
+            self.drain_input();
+            self.wait_key();
+            return Outcome::Fled;
+        }
+
+        let mut rng = rand::thread_rng();
+        let mut heroes: Vec<Battler> = hero_items.iter().map(|h| battle::player_battler(h)).collect();
+        let mut foes: Vec<Battler> = foe_defs.iter().map(|e| battle::enemy_battler(e)).collect();
+        let hero_png: Vec<Vec<u8>> = hero_items.iter().map(|h| art::pixel_png(h)).collect();
+        let foe_png: Vec<Option<Vec<u8>>> =
+            foe_defs.iter().map(|e| art::pixel_by_id(&format!("enemy_{}", e.id))).collect();
+
+        // Layout: foes on top, heroes in the middle, two per side.
+        let (sw, sh) = (14u16, 7u16);
+        let xpos = |n: usize, count: usize, w: u16| -> u16 {
+            if count <= 1 {
+                w / 2 - sw / 2
+            } else if n == 0 {
+                w / 2 - sw - 6
+            } else {
+                w / 2 + 6
+            }
+        };
+        let foe_spos: Vec<(u16, u16)> = (0..foes.len()).map(|i| (xpos(i, foes.len(), self.w), 1)).collect();
+        let foe_ipos: Vec<(u16, u16)> = foe_spos.iter().map(|&(x, _)| (x, 1 + sh)).collect();
+        let hero_row = 1 + sh + 3;
+        let hero_spos: Vec<(u16, u16)> =
+            (0..heroes.len()).map(|i| (xpos(i, heroes.len(), self.w), hero_row)).collect();
+        let hero_ipos: Vec<(u16, u16)> = hero_spos.iter().map(|&(x, _)| (x, hero_row + sh)).collect();
+        let msg_row = self.h - 4;
+
+        self.clear_all();
+        self.center(0, "✦   B A T T L E   ✦", Rgb::new(255, 208, 92));
+        for (i, png) in foe_png.iter().enumerate() {
+            let (x, y) = foe_spos[i];
+            match png {
+                Some(b) if self.graphics => self.blit_sprite(b, x, y, sw, sh, 200 + i as u32),
+                _ => self.draw_battler_sprite(png.as_deref(), x, y, sw, sh, Rgb::new(220, 130, 130)),
+            }
+        }
+        for (i, png) in hero_png.iter().enumerate() {
+            let (x, y) = hero_spos[i];
+            if self.graphics {
+                self.blit_sprite(png, x, y, sw, sh, 100 + i as u32);
+            } else {
+                self.draw_battler_sprite(Some(png), x, y, sw, sh, hero_items[i].theme.accent);
+            }
+        }
+        self.render_team_info(&heroes, &foes, &hero_ipos, &foe_ipos);
+        self.battle_message("The battle begins!", msg_row);
+        self.beat(700);
+
+        let alive = |team: &[Battler]| -> Vec<usize> {
+            (0..team.len()).filter(|&i| team[i].alive()).collect()
+        };
+
+        let outcome = 'battle: loop {
+            // (actor_is_hero, actor_idx, move_idx, target_is_hero, target_idx)
+            let mut actions: Vec<(bool, usize, usize, bool, usize)> = Vec::new();
+
+            // Player picks an action for each living hero.
+            for hi in 0..heroes.len() {
+                if !heroes[hi].alive() {
+                    continue;
+                }
+                'cmd: loop {
+                    self.battle_message(&format!("{} — choose an action", heroes[hi].name), msg_row);
+                    match self.hchoose(&["Fight", "Run"], self.h - 3) {
+                        Some(0) => {
+                            if let Some(mi) = self.move_select(&heroes[hi], msg_row) {
+                                if battle::is_support(&heroes[hi].moves[mi]) {
+                                    actions.push((true, hi, mi, true, hi));
+                                } else {
+                                    let af = alive(&foes);
+                                    let ti = self.target_select(&foes, &af, msg_row);
+                                    actions.push((true, hi, mi, false, ti));
+                                }
+                                break 'cmd;
+                            }
+                        }
+                        Some(1) => break 'battle Outcome::Fled,
+                        _ => {}
+                    }
+                }
+            }
+
+            // Enemies pick actions.
+            for fi in 0..foes.len() {
+                if !foes[fi].alive() {
+                    continue;
+                }
+                let (mi, ti) = battle::ai_action(&foes[fi], &heroes, &mut rng);
+                if battle::is_support(&foes[fi].moves[mi]) {
+                    actions.push((false, fi, mi, false, fi));
+                } else {
+                    actions.push((false, fi, mi, true, ti));
+                }
+            }
+
+            // Resolve in speed order.
+            let spd = |a: &(bool, usize, usize, bool, usize), heroes: &[Battler], foes: &[Battler]| {
+                if a.0 { heroes[a.1].eff_spd() } else { foes[a.1].eff_spd() }
+            };
+            actions.sort_by(|a, b| {
+                spd(b, &heroes, &foes)
+                    .partial_cmp(&spd(a, &heroes, &foes))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+
+            for (ah, ai, mi, th, ti) in actions {
+                let actor_alive = if ah { heroes[ai].alive() } else { foes[ai].alive() };
+                if !actor_alive {
+                    continue;
+                }
+
+                let mut log = Vec::new();
+                let can = {
+                    let actor = if ah { &mut heroes[ai] } else { &mut foes[ai] };
+                    battle::can_act(actor, &mut rng, &mut log)
+                };
+
+                if can {
+                    // Attack lunge.
+                    if ah {
+                        self.bounce(Some(hero_png[ai].as_slice()), hero_spos[ai].0, hero_spos[ai].1, sw, sh, 100 + ai as u32, -1);
+                    } else {
+                        self.bounce(foe_png[ai].as_deref(), foe_spos[ai].0, foe_spos[ai].1, sw, sh, 200 + ai as u32, 1);
+                    }
+
+                    let support = battle::is_support(&(if ah { &heroes[ai] } else { &foes[ai] }).moves[mi]);
+                    if support {
+                        let actor = if ah { &mut heroes[ai] } else { &mut foes[ai] };
+                        log.extend(battle::apply_support(actor, mi));
+                    } else {
+                        // Retarget if the intended target already fainted.
+                        let tgt_len = if th { heroes.len() } else { foes.len() };
+                        let tgt_alive = if th { heroes[ti].alive() } else { foes[ti].alive() };
+                        let real_ti = if tgt_alive {
+                            Some(ti)
+                        } else {
+                            (0..tgt_len).find(|&j| if th { heroes[j].alive() } else { foes[j].alive() })
+                        };
+                        if let Some(ti) = real_ti {
+                            if ah {
+                                log.extend(battle::apply_move(&mut heroes[ai], &mut foes[ti], mi, &mut rng));
+                            } else {
+                                log.extend(battle::apply_move(&mut foes[ai], &mut heroes[ti], mi, &mut rng));
+                            }
+                        } else {
+                            log.push("…but there was no target.".to_string());
+                        }
+                    }
+                }
+
+                for line in &log {
+                    self.render_team_info(&heroes, &foes, &hero_ipos, &foe_ipos);
+                    self.battle_message(line, msg_row);
+                    self.beat(720);
+                }
+                self.render_team_info(&heroes, &foes, &hero_ipos, &foe_ipos);
+
+                if alive(&foes).is_empty() {
+                    break 'battle Outcome::Win;
+                }
+                if alive(&heroes).is_empty() {
+                    break 'battle Outcome::Lose;
+                }
+            }
+
+            // End-of-round damage-over-time for everyone.
+            let mut log = Vec::new();
+            for b in heroes.iter_mut().chain(foes.iter_mut()) {
+                battle::end_of_round(b, &mut log);
+            }
+            for line in &log {
+                self.render_team_info(&heroes, &foes, &hero_ipos, &foe_ipos);
+                self.battle_message(line, msg_row);
+                self.beat(650);
+            }
+            self.render_team_info(&heroes, &foes, &hero_ipos, &foe_ipos);
+            if alive(&foes).is_empty() {
+                break Outcome::Win;
+            }
+            if alive(&heroes).is_empty() {
+                break Outcome::Lose;
+            }
+        };
+
+        self.fill(0, self.h - 3, self.w, 2);
+        let outro = match outcome {
+            Outcome::Win => "Victory! The enemy team is down!".to_string(),
+            Outcome::Lose => "Your team was wiped out…".to_string(),
+            Outcome::Fled => "Your team fled the battle!".to_string(),
+        };
+        self.battle_message(&outro, msg_row);
+        self.center(self.h - 1, "( press space )", Rgb::new(140, 150, 170));
+        self.flush();
+        self.drain_input();
+        self.wait_key();
+        outcome
     }
 }

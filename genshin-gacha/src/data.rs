@@ -68,6 +68,35 @@ pub const ROSTER: &[Item] = &[
                dress, pearl accents, holding a shimmering blade of water, water splashes, \
                serene expression",
     },
+    // ---- Limited 5-star character (Dendro) -----------------------------
+    Item {
+        id: "reika",
+        name: "Reika",
+        title: "The Verdant Oracle",
+        rarity: Rarity::Five,
+        kind: ItemKind::Character { element: Element::Dendro, weapon: WeaponType::Catalyst },
+        limited: true,
+        theme: theme(Rgb::new(16, 40, 24), Rgb::new(96, 200, 120), Rgb::new(210, 255, 220)),
+        flavor: "She reads the roots of the world, and the world reads back.",
+        look: "1girl, solo, very long green hair, golden eyes, ornate white and green oracle robe, \
+               gold leaf hair ornament, floating glowing spellbook, swirling green leaves, \
+               serene wise smile",
+    },
+    // ---- Limited 5-star character (Anemo) — a more distinctive design ---
+    Item {
+        id: "kuroha",
+        name: "Kuroha",
+        title: "Nocturne of Black Feathers",
+        rarity: Rarity::Five,
+        kind: ItemKind::Character { element: Element::Anemo, weapon: WeaponType::Catalyst },
+        limited: true,
+        theme: theme(Rgb::new(18, 12, 28), Rgb::new(122, 82, 182), Rgb::new(222, 212, 236)),
+        flavor: "She collects last words the way others collect flowers.",
+        look: "1girl, solo, very long black hair with silver streaks, heterochromia, one crimson \
+               eye and one golden eye, elegant gothic black and violet dress, black feather and \
+               wing motifs, holding an ornate dark grimoire, floating black feathers, \
+               cool elegant expression",
+    },
     // ---- Standard-pool 5-star weapon ----------------------------------
     Item {
         id: "celestial_edge",
@@ -117,6 +146,56 @@ pub const ROSTER: &[Item] = &[
         flavor: "A small light, right before the thunder.",
         look: "1girl, solo, short purple hair, bright purple eyes, small mage outfit with cape, \
                floating glowing firefly lights, electric sparks, energetic expression",
+    },
+    Item {
+        id: "kogane",
+        name: "Kogane",
+        title: "Golden Bulwark",
+        rarity: Rarity::Four,
+        kind: ItemKind::Character { element: Element::Geo, weapon: WeaponType::Claymore },
+        limited: false,
+        theme: theme(Rgb::new(40, 30, 10), Rgb::new(224, 180, 70), Rgb::new(255, 236, 180)),
+        flavor: "Gilded, unbroken, and entirely unimpressed with you.",
+        look: "1girl, solo, short golden blonde hair, amber eyes, ornate gold and brown plate armor, \
+               holding a massive golden greatsword, confident grin",
+    },
+    Item {
+        id: "shizuku",
+        name: "Shizuku",
+        title: "Frostdrop Lancer",
+        rarity: Rarity::Four,
+        kind: ItemKind::Character { element: Element::Cryo, weapon: WeaponType::Polearm },
+        limited: false,
+        theme: theme(Rgb::new(18, 34, 50), Rgb::new(120, 196, 232), Rgb::new(216, 244, 255)),
+        flavor: "Every drop of her patience has already frozen.",
+        look: "1girl, solo, pale blue hair in a braid, blue eyes, white and cyan winter dress, \
+               holding a crystalline ice spear, falling snow, calm cool expression",
+    },
+    Item {
+        id: "kagerou",
+        name: "Kagerou",
+        title: "The Fox-Masked Blade",
+        rarity: Rarity::Four,
+        kind: ItemKind::Character { element: Element::Pyro, weapon: WeaponType::Sword },
+        limited: false,
+        theme: theme(Rgb::new(40, 14, 10), Rgb::new(240, 130, 60), Rgb::new(255, 236, 200)),
+        flavor: "Behind the mask, a grin — and behind the grin, a blade.",
+        look: "1girl, solo, orange and white hair, fox ears, a white kitsune fox mask worn on the \
+               side of her head, red and white kimono, holding a flaming katana, foxfire embers, \
+               playful sharp grin",
+    },
+    Item {
+        id: "seren",
+        name: "Seren",
+        title: "Clockwork Sovereign",
+        rarity: Rarity::Four,
+        kind: ItemKind::Character { element: Element::Geo, weapon: WeaponType::Catalyst },
+        limited: false,
+        theme: theme(Rgb::new(20, 30, 30), Rgb::new(190, 150, 80), Rgb::new(160, 220, 210)),
+        flavor: "Everything runs on time, or it answers to her.",
+        look: "1girl, solo, teal hair in a bun, monocle, brass and teal steampunk engineer outfit, \
+               clockwork gear motifs, a floating brass gear-orb catalyst, mechanical gear halo, \
+               curious clever expression",
     },
     // ---- 4-star weapons (non-featured 4-star pool) ---------------------
     Item {
@@ -200,6 +279,10 @@ pub const POOL_4: &[&str] = &[
     "mizuki",
     "tsubaki",
     "hotaru",
+    "kogane",
+    "shizuku",
+    "kagerou",
+    "seren",
     "whispering_gale",
     "ironwood_longbow",
     "boulderbreaker",
@@ -234,6 +317,18 @@ pub const BANNERS: &[Banner] = &[
         name: "Starfall Nocturne",
         featured_5: "yozora",
         featured_4: ["mizuki", "tsubaki", "hotaru"],
+    },
+    Banner {
+        id: "verdant",
+        name: "Verdant Reverie",
+        featured_5: "reika",
+        featured_4: ["kogane", "shizuku", "mizuki"],
+    },
+    Banner {
+        id: "nocturne",
+        name: "Nocturne Requiem",
+        featured_5: "kuroha",
+        featured_4: ["kagerou", "seren", "tsubaki"],
     },
 ];
 

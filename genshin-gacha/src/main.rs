@@ -1,15 +1,18 @@
-//! A terminal gacha / wish simulator with Genshin-accurate odds and Ghostty
-//! inline-image reveals.
+//! A terminal gacha / wish simulator with Genshin-accurate odds, Ghostty
+//! inline-image reveals, a pixel-art collection, and turn-based battles.
 
 mod anim;
 mod art;
+mod battle;
 mod data;
+mod fx;
 mod gacha;
 mod graphics;
 mod model;
 mod save;
+mod ui;
 
-use std::io::{stdout, Write};
+use std::io::stdout;
 
 use crossterm::terminal;
 use crossterm::{cursor, execute};
@@ -19,13 +22,7 @@ use anim::Stage;
 use gacha::{PityState, WishOutcome};
 use model::{Item, Rarity};
 use save::SaveData;
-
-const RESET: &str = "\x1b[0m";
-const BOLD: &str = "\x1b[1m";
-const GOLD: &str = "\x1b[38;2;255;208;92m";
-const PURPLE: &str = "\x1b[38;2;196;120;255m";
-const CYAN: &str = "\x1b[38;2;120;200;230m";
-const GREY: &str = "\x1b[38;2;140;150;175m";
+use ui::{MenuItem, Ui};
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -37,7 +34,7 @@ fn main() {
             return;
         }
         Some("--export-prompts") => {
-            let items: Vec<serde_json::Value> = data::ROSTER
+            let mut items: Vec<serde_json::Value> = data::ROSTER
                 .iter()
                 .map(|i| {
                     serde_json::json!({
@@ -51,6 +48,16 @@ fn main() {
                     })
                 })
                 .collect();
+            for e in battle::ENEMIES {
+                items.push(serde_json::json!({
+                    "id": format!("enemy_{}", e.id),
+                    "name": e.name,
+                    "kind": "enemy",
+                    "element": e.element.name(),
+                    "rarity": if e.boss { 5 } else { 4 },
+                    "look": e.look,
+                }));
+            }
             println!("{}", serde_json::to_string_pretty(&items).unwrap());
             return;
         }
@@ -76,6 +83,24 @@ fn main() {
             }
             return;
         }
+        Some("--dump-fx") => {
+            let dir = args.get(1).map(|s| s.as_str()).unwrap_or("fx-preview");
+            std::fs::create_dir_all(dir).ok();
+            let frames = fx::wish_cinematic(Rarity::Five);
+            for (i, f) in frames.iter().enumerate() {
+                std::fs::write(format!("{dir}/frame_{i:02}.png"), f).ok();
+            }
+            println!("wrote {} frames to {dir}", frames.len());
+            return;
+        }
+        Some("--battle-sim") => {
+            let h1 = args.get(1).map(|s| s.as_str()).unwrap_or("yukihana");
+            let h2 = args.get(2).map(|s| s.as_str()).unwrap_or("guren");
+            let f1 = args.get(3).map(|s| s.as_str()).unwrap_or("slime");
+            let f2 = args.get(4).map(|s| s.as_str()).unwrap_or("goblin");
+            battle_sim(&[h1, h2], &[f1, f2]);
+            return;
+        }
         Some("--help" | "-h") => {
             print_help();
             return;
@@ -95,127 +120,104 @@ fn main() {
 }
 
 // ---------------------------------------------------------------------------
-// Interactive menu loop
+// Interactive session (persistent full-screen widget UI)
 // ---------------------------------------------------------------------------
 
 fn interactive() {
+    let mut ui = Ui::new();
     let mut save = SaveData::load();
+
     loop {
-        match screen(&home_body(&save), "› ").trim() {
-            "1" => wish_menu(&mut save),
-            "2" => show_collection(&save),
-            "3" => show_details(&save),
-            "4" => show_history(&save),
-            "5" => settings_menu(&mut save),
-            "6" => {
+        let p = &save.pity;
+        let guar5 = if p.guaranteed_5 { "GUARANTEED" } else { "50/50" };
+        let header = vec![
+            format!(
+                "Intertwined Fates {}     Primogems {}     (≈ {} wishes)",
+                save.intertwined_fates, save.primogems, save.available_wishes()
+            ),
+            format!(
+                "5★ pity {}/90     4★ pity {}/10     next 5★ {}",
+                p.pulls_since_5, p.pulls_since_4, guar5
+            ),
+        ];
+        let items = [
+            MenuItem::new("Wish"),
+            MenuItem::new("Collection"),
+            MenuItem::new("Battle"),
+            MenuItem::new("Wish Details"),
+            MenuItem::new("History"),
+            MenuItem::new("Settings"),
+            MenuItem::new("Top Up (sim)"),
+            MenuItem::new("Reset"),
+            MenuItem::new("Quit"),
+        ];
+        match ui.menu("✦   W I S H   S I M U L A T O R   ✦", &header, &items, false) {
+            Some(0) => wish_menu(&mut ui, &mut save),
+            Some(1) => show_collection(&mut ui, &save),
+            Some(2) => battle_menu(&mut ui, &mut save),
+            Some(3) => show_details(&mut ui, &save),
+            Some(4) => show_history(&mut ui, &save),
+            Some(5) => settings_menu(&mut ui, &mut save),
+            Some(6) => {
                 save.primogems += 16000;
                 save.intertwined_fates += 10;
                 save.save();
-                screen(
-                    &format!("{GOLD}{BOLD}+16000 primogems, +10 fates.{RESET}"),
-                    &format!("{GREY}( press enter ){RESET}"),
-                );
+                ui.message(&["+16000 primogems, +10 fates.".to_string()], "Top Up");
             }
-            "7" => reset_menu(&mut save),
-            "0" | "q" | "quit" | "exit" | "\u{4}" => {
-                print!("\x1b[2J\x1b[H\n  {GREY}Until the stars align again.{RESET}\n");
-                stdout().flush().ok();
-                break;
-            }
-            _ => {}
+            Some(7) => reset_menu(&mut ui, &mut save),
+            _ => break,
         }
     }
+    ui.close();
 }
 
-fn home_body(save: &SaveData) -> String {
-    let p = &save.pity;
-    let guar5 = if p.guaranteed_5 { "GUARANTEED" } else { "50/50" };
-    let bar = "✦ · ─────────────────────────────────────────── · ✦";
-    let mut s = String::new();
-    s += &format!("{GOLD}{BOLD}{bar}{RESET}\n");
-    s += &format!("{GOLD}{BOLD}W  I  S  H     S  I  M  U  L  A  T  O  R{RESET}\n");
-    s += &format!("{GOLD}{BOLD}{bar}{RESET}\n\n");
-    s += &format!(
-        "{CYAN}Intertwined Fates{RESET} {BOLD}{}{RESET}    {PURPLE}Primogems{RESET} {}    {GREY}(≈ {} wishes){RESET}\n",
-        save.intertwined_fates, save.primogems, save.available_wishes()
-    );
-    s += &format!(
-        "{GREY}5★ pity{RESET} {}/90   {GREY}4★ pity{RESET} {}/10   {GREY}next 5★{RESET} {}\n\n",
-        p.pulls_since_5, p.pulls_since_4, guar5
-    );
-    s += &format!("{BOLD}1{RESET}  Wish            {BOLD}2{RESET}  Collection      {BOLD}3{RESET}  Wish details\n");
-    s += &format!("{BOLD}4{RESET}  History         {BOLD}5{RESET}  Settings        {BOLD}6{RESET}  Top up (sim)\n");
-    s += &format!("{BOLD}7{RESET}  Reset           {BOLD}0{RESET}  Quit");
-    if !graphics::supported() {
-        s += &format!("\n\n{GREY}(No Kitty graphics — run in Ghostty for image reveals){RESET}");
-    }
-    s
-}
-
-fn wish_menu(save: &mut SaveData) {
+fn wish_menu(ui: &mut Ui, save: &mut SaveData) {
     loop {
-        let mut body = format!("{GOLD}{BOLD}── CHOOSE A BANNER ──{RESET}\n\n");
-        for (i, b) in data::BANNERS.iter().enumerate() {
-            let five = data::item(b.featured_5);
-            let el = five.element().map(|e| e.name()).unwrap_or("");
-            body += &format!("{BOLD}{}{RESET}  {GOLD}{}{RESET}\n", i + 1, b.name);
-            body += &format!(
-                "{GOLD}★★★★★{RESET} {} {GREY}·{RESET} {} {GREY}{}{RESET}\n",
-                five.name, el, five.title
-            );
-            let f4: Vec<&str> = b.featured_4.iter().map(|id| data::item(id).name).collect();
-            body += &format!("{PURPLE}★★★★{RESET}  {}\n\n", f4.join(", "));
-        }
-        body += &format!("{GREY}0  back{RESET}");
-
-        let choice = screen(&body, "banner › ");
-        if choice == "\u{4}" {
-            return;
-        }
-        let idx: usize = match choice.trim().parse::<usize>() {
-            Ok(0) => return,
-            Ok(n) if n >= 1 && n <= data::BANNERS.len() => n - 1,
-            _ => continue,
-        };
-        count_menu(save, data::BANNERS[idx].id);
-    }
-}
-
-fn count_menu(save: &mut SaveData, banner_id: &str) {
-    loop {
-        let b = data::banner(banner_id);
-        let mut body = format!("{GOLD}{BOLD}{}{RESET}\n\n", b.name);
-        body += &format!("{GREY}You have ≈ {} wishes.{RESET}\n\n", save.available_wishes());
-        body += &format!("{BOLD}1{RESET}  Wish ×1     {GREY}(1 fate){RESET}\n");
-        body += &format!("{BOLD}2{RESET}  Wish ×10    {GREY}(10 fates){RESET}\n");
-        body += &format!("{BOLD}0{RESET}  back");
-        match screen(&body, "› ").trim() {
-            "1" => {
-                do_wish(save, banner_id, 1);
-                return;
-            }
-            "2" => {
-                do_wish(save, banner_id, 10);
-                return;
-            }
-            "0" | "\u{4}" => return,
-            _ => {}
+        let items: Vec<MenuItem> = data::BANNERS
+            .iter()
+            .map(|b| {
+                let five = data::item(b.featured_5);
+                let el = five.element().map(|e| e.name()).unwrap_or("");
+                let f4: Vec<&str> = b.featured_4.iter().map(|id| data::item(id).name).collect();
+                MenuItem::new(b.name).detail(vec![
+                    format!("★★★★★  {}   {}  ·  {}", five.name, el, five.title),
+                    format!("★★★★   {}", f4.join(", ")),
+                ])
+            })
+            .collect();
+        let header = vec![format!("≈ {} wishes available", save.available_wishes())];
+        match ui.menu("CHOOSE A BANNER", &header, &items, true) {
+            Some(i) => count_menu(ui, save, data::BANNERS[i].id),
+            None => return,
         }
     }
 }
 
-fn do_wish(save: &mut SaveData, banner_id: &str, n: u64) {
+fn count_menu(ui: &mut Ui, save: &mut SaveData, banner_id: &str) {
+    let name = data::banner(banner_id).name;
+    let items = [
+        MenuItem::new("Wish ×1    (1 fate)"),
+        MenuItem::new("Wish ×10   (10 fates)"),
+    ];
+    let header = vec![format!("≈ {} wishes available", save.available_wishes())];
+    match ui.menu(name, &header, &items, true) {
+        Some(0) => do_wish(ui, save, banner_id, 1),
+        Some(1) => do_wish(ui, save, banner_id, 10),
+        _ => {}
+    }
+}
+
+fn do_wish(ui: &mut Ui, save: &mut SaveData, banner_id: &str, n: u64) {
     if !save.spend(n) {
-        screen(
-            &format!("{PURPLE}Not enough fates. Top up from the main menu (option 6).{RESET}"),
-            &format!("{GREY}( press enter ){RESET}"),
+        ui.message(
+            &["Not enough fates.".to_string(), "Use Top Up from the main menu.".to_string()],
+            "—",
         );
         return;
     }
     let banner = data::banner(banner_id);
     let mut rng = thread_rng();
 
-    // Resolve all pulls up front, then save, then play the show.
     let mut results: Vec<(WishOutcome, bool, u32)> = Vec::with_capacity(n as usize);
     for _ in 0..n {
         let outcome = save.pity.roll(banner, &mut rng);
@@ -232,9 +234,8 @@ fn do_wish(save: &mut SaveData, banner_id: &str, n: u64) {
     }
     save.save();
 
-    let fast = save.settings.fast;
-    let bell = save.settings.bell;
-    with_stage(fast, bell, |stage| {
+    let (fast, bell) = (save.settings.fast, save.settings.bell);
+    run_stage(fast, bell, |stage| {
         let best = results.iter().map(|(o, _, _)| o.rarity).max().unwrap_or(Rarity::Three);
         stage.build_up(best);
         for (outcome, is_new, count) in &results {
@@ -249,13 +250,7 @@ fn do_wish(save: &mut SaveData, banner_id: &str, n: u64) {
     });
 }
 
-// ---------------------------------------------------------------------------
-// Non-wish screens
-// ---------------------------------------------------------------------------
-
-fn show_collection(save: &SaveData) {
-    // All characters (with owned count), then weapons — rendered as a visual
-    // pixel-art gallery in the alternate screen.
+fn show_collection(_ui: &mut Ui, save: &SaveData) {
     let chars: Vec<(&Item, u32)> = data::ROSTER
         .iter()
         .filter(|i| i.is_character())
@@ -266,158 +261,173 @@ fn show_collection(save: &SaveData) {
         .filter(|i| !i.is_character())
         .map(|i| (i, save.count(i.id)))
         .collect();
-
-    let fast = save.settings.fast;
-    let bell = save.settings.bell;
-    with_stage(fast, bell, |stage| {
+    let (fast, bell) = (save.settings.fast, save.settings.bell);
+    run_stage(fast, bell, |stage| {
         stage.gallery(&chars, &weapons);
     });
 }
 
-fn show_details(save: &SaveData) {
+fn show_details(ui: &mut Ui, save: &SaveData) {
     let p = &save.pity;
-    let mut s = format!("{GOLD}{BOLD}── WISH DETAILS ──{RESET}\n\n");
-    s += &format!("{BOLD}Character Event Wish{RESET}\n\n");
-    s += &format!("{CYAN}5★ character{RESET}   base 0.600%   consolidated ~1.6%\n");
-    s += &format!("{GREY}soft pity from pull 74, guaranteed at 90{RESET}\n");
-    s += &format!("{PURPLE}4★ item{RESET}       base 5.100%   consolidated ~13%\n");
-    s += &format!("{GREY}soft pity from pull 9, guaranteed at 10{RESET}\n\n");
-    s += &format!("{BOLD}50/50{RESET}  half of 5★ pulls are the featured character.\n");
-    s += &format!("{GREY}Lose it and the next 5★ is guaranteed featured.{RESET}\n");
-    s += &format!("{BOLD}Capturing Radiance{RESET}  losing streaks boost your featured\n");
-    s += &format!("{GREY}win-rate and cap how many 50/50s you can lose in a row.{RESET}\n\n");
-    s += &format!("{BOLD}Your state{RESET}\n");
-    s += &format!("5★ pity   {}/90\n", p.pulls_since_5);
-    s += &format!("4★ pity   {}/10\n", p.pulls_since_4);
-    s += &format!("next 5★   {}\n", if p.guaranteed_5 { "GUARANTEED featured" } else { "50/50" });
-    s += &format!("next 4★   {}\n", if p.guaranteed_4 { "GUARANTEED rate-up" } else { "50/50" });
-    s += &format!("radiance  {} consecutive losses\n", p.radiance_losses);
-    s += &format!("total     {} wishes", p.total_pulls);
-    screen(&s, &format!("{GREY}( press enter ){RESET}"));
+    let lines = vec![
+        "Character Event Wish".to_string(),
+        String::new(),
+        "5★ character   base 0.600%   consolidated ~1.6%".to_string(),
+        "soft pity from pull 74, guaranteed at 90".to_string(),
+        "4★ item        base 5.100%   consolidated ~12.5%".to_string(),
+        "soft pity from pull 9, guaranteed at 10".to_string(),
+        String::new(),
+        "50/50 — half of 5★ pulls are the featured character.".to_string(),
+        "Capturing Radiance boosts your featured win-rate on losing streaks.".to_string(),
+        String::new(),
+        format!("5★ pity {}/90     4★ pity {}/10", p.pulls_since_5, p.pulls_since_4),
+        format!(
+            "next 5★ {}     radiance {} losses     total {} wishes",
+            if p.guaranteed_5 { "GUARANTEED" } else { "50/50" },
+            p.radiance_losses,
+            p.total_pulls
+        ),
+    ];
+    ui.message(&lines, "WISH DETAILS");
 }
 
-fn show_history(save: &SaveData) {
-    let mut s = format!("{GOLD}{BOLD}── RECENT WISHES ──{RESET}\n\n");
+fn show_history(ui: &mut Ui, save: &SaveData) {
+    let mut lines = Vec::new();
     if save.history.is_empty() {
-        s += &format!("{GREY}No wishes yet.{RESET}");
+        lines.push("No wishes yet.".to_string());
     }
-    for e in save.history.iter().rev().take(20) {
+    for e in save.history.iter().rev().take(16) {
         let item = data::item(&e.id);
-        let (col, stars) = match e.rarity {
-            5 => (GOLD, "★★★★★"),
-            4 => (PURPLE, "★★★★"),
-            _ => (CYAN, "★★★"),
-        };
-        s += &format!(
-            "{GREY}#{:<5}{RESET} {col}{:<6}{RESET} {:<20} {GREY}{}{RESET}\n",
-            e.pull, stars, item.name, e.banner
-        );
+        let stars = "★".repeat(e.rarity as usize);
+        lines.push(format!("#{:<5} {:<6} {:<20} {}", e.pull, stars, item.name, e.banner));
     }
-    screen(s.trim_end(), &format!("{GREY}( press enter ){RESET}"));
+    ui.message(&lines, "RECENT WISHES");
 }
 
-fn settings_menu(save: &mut SaveData) {
+fn settings_menu(ui: &mut Ui, save: &mut SaveData) {
     loop {
-        let mut body = format!("{GOLD}{BOLD}── SETTINGS ──{RESET}\n\n");
-        body += &format!("{BOLD}1{RESET}  Terminal bell on 5★   [{}]\n", onoff(save.settings.bell));
-        body += &format!("{BOLD}2{RESET}  Fast mode (short anim) [{}]\n", onoff(save.settings.fast));
-        body += &format!("{BOLD}0{RESET}  back");
-        match screen(&body, "› ").trim() {
-            "1" => save.settings.bell = !save.settings.bell,
-            "2" => save.settings.fast = !save.settings.fast,
-            "0" | "\u{4}" => {
+        let items = [
+            MenuItem::new(format!("Terminal bell on 5★   [{}]", onoff(save.settings.bell))),
+            MenuItem::new(format!("Fast mode (short anim) [{}]", onoff(save.settings.fast))),
+            MenuItem::new("Back"),
+        ];
+        match ui.menu("SETTINGS", &[], &items, true) {
+            Some(0) => save.settings.bell = !save.settings.bell,
+            Some(1) => save.settings.fast = !save.settings.fast,
+            _ => {
                 save.save();
                 return;
             }
-            _ => {}
         }
         save.save();
     }
 }
 
-fn reset_menu(save: &mut SaveData) {
-    let body = format!(
-        "{PURPLE}{BOLD}Reset ALL progress — pity, inventory, currency?{RESET}\n\n{GREY}Type RESET to confirm.{RESET}"
-    );
-    let confirmed = screen(&body, "› ").trim() == "RESET";
-    let msg = if confirmed {
+fn reset_menu(ui: &mut Ui, save: &mut SaveData) {
+    let warn = vec![
+        "This erases pity, inventory, and currency.".to_string(),
+        "There is no undo.".to_string(),
+    ];
+    if ui.confirm("Reset ALL progress?", &warn) {
         *save = SaveData::default();
         save.save();
-        format!("{GREY}The slate is clean.{RESET}")
-    } else {
-        format!("{GREY}Cancelled.{RESET}")
-    };
-    screen(&msg, &format!("{GREY}( press enter ){RESET}"));
+        ui.message(&["The slate is clean.".to_string()], "Reset");
+    }
 }
 
 // ---------------------------------------------------------------------------
-// Terminal helpers
+// Battle
 // ---------------------------------------------------------------------------
 
-fn with_stage<F: FnOnce(&mut Stage)>(fast: bool, bell: bool, f: F) {
-    let mut out = stdout();
-    terminal::enable_raw_mode().ok();
-    execute!(out, terminal::EnterAlternateScreen, cursor::Hide).ok();
+fn battle_menu(ui: &mut Ui, save: &mut SaveData) {
+    let owned: Vec<&Item> = data::ROSTER
+        .iter()
+        .filter(|i| i.is_character() && save.count(i.id) > 0)
+        .collect();
+    if owned.is_empty() {
+        ui.message(
+            &["You have no characters yet.".to_string(), "Wish on a banner first!".to_string()],
+            "Battle",
+        );
+        return;
+    }
 
+    let hero_items: Vec<MenuItem> = owned
+        .iter()
+        .map(|i| {
+            let el = i.element().map(|e| e.name()).unwrap_or("");
+            MenuItem::new(format!("{}  {}", i.name, el))
+                .detail(vec![format!("{}  ·  {}", "★".repeat(i.rarity.stars()), i.title)])
+        })
+        .collect();
+    let want = owned.len().min(2);
+    let hero_pick = ui.multi_select(
+        "CHOOSE YOUR TEAM",
+        &[format!("Pick {want} fighter(s) for the 2v2")],
+        &hero_items,
+        want,
+    );
+    if hero_pick.is_empty() {
+        return;
+    }
+    let heroes: Vec<&Item> = hero_pick.iter().map(|&i| owned[i]).collect();
+
+    let enemy_items: Vec<MenuItem> = battle::ENEMIES
+        .iter()
+        .map(|e| {
+            let label = if e.boss { format!("{}  (BOSS)", e.name) } else { e.name.to_string() };
+            MenuItem::new(label).detail(vec![format!(
+                "{}  ·  reward {} primogems",
+                e.element.name(),
+                e.reward
+            )])
+        })
+        .collect();
+    let foe_pick = ui.multi_select(
+        "CHOOSE 2 OPPONENTS",
+        &["Pick 2 enemies to face".to_string()],
+        &enemy_items,
+        2,
+    );
+    if foe_pick.is_empty() {
+        return;
+    }
+    let foes: Vec<&battle::Enemy> = foe_pick.iter().map(|&i| &battle::ENEMIES[i]).collect();
+    let reward: u64 = foes.iter().map(|e| e.reward).sum();
+
+    let (fast, bell) = (save.settings.fast, save.settings.bell);
+    let mut outcome = battle::Outcome::Fled;
+    run_stage(fast, bell, |stage| {
+        outcome = stage.battle(&heroes, &foes);
+    });
+
+    match outcome {
+        battle::Outcome::Win => {
+            save.primogems += reward;
+            save.save();
+            ui.message(
+                &["Your team is victorious!".to_string(), format!("+{reward} primogems")],
+                "VICTORY",
+            );
+        }
+        battle::Outcome::Lose => {
+            ui.message(&["Your team was defeated…".to_string()], "DEFEAT");
+        }
+        battle::Outcome::Fled => {}
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/// Run a `Stage`-based full-screen sequence. Assumes the `Ui` session already
+/// holds raw mode + the alternate screen; just clears any inline images after.
+fn run_stage<F: FnOnce(&mut Stage)>(fast: bool, bell: bool, f: F) {
+    let mut out = stdout();
     let mut stage = Stage::new(stdout(), fast, bell);
     f(&mut stage);
-
     graphics::clear(&mut out).ok();
-    execute!(out, cursor::Show, terminal::LeaveAlternateScreen).ok();
-    terminal::disable_raw_mode().ok();
-}
-
-/// Visible width of a string, ignoring ANSI escape sequences.
-fn viz_len(s: &str) -> usize {
-    let mut n = 0usize;
-    let mut chars = s.chars();
-    while let Some(c) = chars.next() {
-        if c == '\x1b' {
-            // Skip a CSI sequence up to its final letter.
-            for nc in chars.by_ref() {
-                if nc.is_ascii_alphabetic() {
-                    break;
-                }
-            }
-        } else {
-            n += 1;
-        }
-    }
-    n
-}
-
-/// Clear the whole window and render `body` centered both ways, with `prompt`
-/// centered just below it. Reads and returns a line of input (EOT sentinel on
-/// end-of-input). Used for every menu and info screen.
-fn screen(body: &str, prompt: &str) -> String {
-    let (w, h) = terminal::size().unwrap_or((80, 24));
-    let lines: Vec<&str> = body.lines().collect();
-    let block = lines.len() as u16 + 2; // body + blank + prompt
-    let top = h.saturating_sub(block) / 2;
-
-    let mut buf = String::from("\x1b[2J\x1b[H");
-    for _ in 0..top {
-        buf.push('\n');
-    }
-    let pad = |s: &str| " ".repeat((w as usize).saturating_sub(viz_len(s)) / 2);
-    for l in &lines {
-        if !l.is_empty() {
-            buf.push_str(&pad(l));
-            buf.push_str(l);
-        }
-        buf.push_str("\r\n");
-    }
-    buf.push_str("\r\n");
-    buf.push_str(&pad(prompt));
-    buf.push_str(prompt);
-    print!("{buf}");
-    stdout().flush().ok();
-
-    let mut s = String::new();
-    match std::io::stdin().read_line(&mut s) {
-        Ok(0) => "\u{4}".to_string(),
-        _ => s,
-    }
 }
 
 fn onoff(b: bool) -> &'static str {
@@ -475,17 +485,104 @@ fn simulate(n: u64, banner_id: &str) {
         );
         println!("  lost 50/50          : {lost}");
     }
-    println!(
-        "  target: 5★ ~1.6%, 4★ ~12.5%, avg pity ~62, featured ~70% (radiance)"
-    );
+    println!("  target: 5★ ~1.6%, 4★ ~12.5%, avg pity ~62, featured ~70% (radiance)");
+}
+
+/// Headless 2v2 auto-battle to verify the team mechanics (both sides AI).
+fn battle_sim(hero_ids: &[&str], foe_ids: &[&str]) {
+    use battle::Battler;
+    let mut heroes: Vec<Battler> = hero_ids.iter().map(|id| battle::player_battler(data::item(id))).collect();
+    let mut foes: Vec<Battler> = foe_ids.iter().map(|id| battle::enemy_battler(battle::enemy(id))).collect();
+    let mut rng = thread_rng();
+    let alive = |t: &[Battler]| (0..t.len()).filter(|&i| t[i].alive()).count();
+    let names = |t: &[Battler]| t.iter().map(|b| b.name.clone()).collect::<Vec<_>>().join(" & ");
+    println!("{}  vs  {}\n", names(&heroes), names(&foes));
+
+    for round in 1..=60 {
+        if alive(&heroes) == 0 || alive(&foes) == 0 {
+            break;
+        }
+        // Gather actions (both sides AI): (is_hero, actor, move, target).
+        let mut acts: Vec<(bool, usize, usize, usize)> = Vec::new();
+        for i in 0..heroes.len() {
+            if heroes[i].alive() {
+                let (mi, ti) = battle::ai_action(&heroes[i], &foes, &mut rng);
+                acts.push((true, i, mi, ti));
+            }
+        }
+        for i in 0..foes.len() {
+            if foes[i].alive() {
+                let (mi, ti) = battle::ai_action(&foes[i], &heroes, &mut rng);
+                acts.push((false, i, mi, ti));
+            }
+        }
+        acts.sort_by(|a, b| {
+            let sa = if a.0 { heroes[a.1].eff_spd() } else { foes[a.1].eff_spd() };
+            let sb = if b.0 { heroes[b.1].eff_spd() } else { foes[b.1].eff_spd() };
+            sb.partial_cmp(&sa).unwrap()
+        });
+
+        for (ah, ai, mi, ti) in acts {
+            let actor_alive = if ah { heroes[ai].alive() } else { foes[ai].alive() };
+            if !actor_alive {
+                continue;
+            }
+            let mut log = Vec::new();
+            let can = {
+                let actor = if ah { &mut heroes[ai] } else { &mut foes[ai] };
+                battle::can_act(actor, &mut rng, &mut log)
+            };
+            if can {
+                let support = battle::is_support(&(if ah { &heroes[ai] } else { &foes[ai] }).moves[mi]);
+                if support {
+                    let actor = if ah { &mut heroes[ai] } else { &mut foes[ai] };
+                    log.extend(battle::apply_support(actor, mi));
+                } else {
+                    let tgt_alive = if ah { foes[ti].alive() } else { heroes[ti].alive() };
+                    let rti = if tgt_alive {
+                        Some(ti)
+                    } else if ah {
+                        (0..foes.len()).find(|&j| foes[j].alive())
+                    } else {
+                        (0..heroes.len()).find(|&j| heroes[j].alive())
+                    };
+                    if let Some(ti) = rti {
+                        if ah {
+                            log.extend(battle::apply_move(&mut heroes[ai], &mut foes[ti], mi, &mut rng));
+                        } else {
+                            log.extend(battle::apply_move(&mut foes[ai], &mut heroes[ti], mi, &mut rng));
+                        }
+                    }
+                }
+            }
+            for l in &log {
+                println!("{l}");
+            }
+            if alive(&heroes) == 0 || alive(&foes) == 0 {
+                break;
+            }
+        }
+        let mut log = Vec::new();
+        for b in heroes.iter_mut().chain(foes.iter_mut()) {
+            battle::end_of_round(b, &mut log);
+        }
+        for l in &log {
+            println!("{l}");
+        }
+        let hp = |t: &[Battler]| t.iter().map(|b| format!("{} {}/{}", b.name, b.hp, b.max_hp)).collect::<Vec<_>>().join(", ");
+        println!("  round {round}:  [{}]  vs  [{}]", hp(&heroes), hp(&foes));
+    }
+    let winner = if alive(&heroes) > 0 { "Heroes" } else { "Enemies" };
+    println!("\nWinner: {winner}");
 }
 
 fn print_help() {
     println!("wish — a terminal gacha / wish simulator (Genshin-accurate odds)\n");
     println!("USAGE:");
-    println!("  wish                     launch the interactive simulator");
+    println!("  wish                     launch the interactive game");
     println!("  wish --simulate N [id]   roll N wishes headless, print odds");
+    println!("  wish --export-prompts    dump art prompts as JSON");
     println!("  wish --help              this message\n");
-    println!("Banner ids: snowfall, everblaze, starfall");
+    println!("Banner ids: snowfall, everblaze, starfall, verdant");
     println!("Env: WISH_FORCE_GRAPHICS=1 forces image output on unknown terminals.");
 }

@@ -54,6 +54,12 @@ fn load_pixel_asset(id: &str) -> Option<Vec<u8>> {
     Some(bytes)
 }
 
+/// Load a pixel sprite by raw asset id (e.g. an enemy's `enemy_slime`). Returns
+/// None if no such sprite has been generated yet.
+pub fn pixel_by_id(id: &str) -> Option<Vec<u8>> {
+    load_pixel_asset(id)
+}
+
 /// A hand-authored pixel-art bust for the collection grid — an original sprite
 /// drawn from each character's palette and hairstyle (inspired by, not scaled
 /// from, the splash). Weapons fall back to a downscaled card.

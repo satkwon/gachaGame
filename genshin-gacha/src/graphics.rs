@@ -58,6 +58,40 @@ pub fn draw_png<W: Write>(out: &mut W, png: &[u8], cols: u16, rows: u16) -> std:
     Ok(())
 }
 
+/// Draw one animation frame, replacing the previous frame *in place* by reusing
+/// the same image id and placement id. No accumulation, no per-frame delete —
+/// cheap and flicker-free. Call `clear` once the animation ends.
+pub fn draw_png_frame<W: Write>(
+    out: &mut W,
+    png: &[u8],
+    cols: u16,
+    rows: u16,
+    id: u32,
+) -> std::io::Result<()> {
+    let encoded = STANDARD.encode(png);
+    let bytes = encoded.as_bytes();
+    let chunk = 4096;
+    let total = bytes.len();
+    let mut offset = 0;
+    let mut first = true;
+    while offset < total {
+        let end = (offset + chunk).min(total);
+        let m = if end == total { 0 } else { 1 };
+        out.write_all(b"\x1b_G")?;
+        if first {
+            write!(out, "a=T,f=100,c={cols},r={rows},C=1,i={id},p={id},q=2,m={m};")?;
+            first = false;
+        } else {
+            write!(out, "m={m};")?;
+        }
+        out.write_all(&bytes[offset..end])?;
+        out.write_all(b"\x1b\\")?;
+        offset = end;
+    }
+    out.flush()?;
+    Ok(())
+}
+
 /// Delete every image currently placed on screen.
 pub fn clear<W: Write>(out: &mut W) -> std::io::Result<()> {
     out.write_all(b"\x1b_Ga=d\x1b\\")?;

@@ -53,6 +53,23 @@ NEG = (
 
 
 def build(item):
+    if item["kind"] == "enemy":
+        # A SINGLE classic-RPG monster. The pixel LoRA loves sprite sheets, so
+        # lead hard with singularity tags and heavily negate any grid/sheet.
+        prompt = (
+            f"solo, 1other, a single monster, only one creature, one monster, "
+            f"pokemon style creature, chibi pixel art, thick black outline, "
+            f"flat cel shading, full body, front view, centered, "
+            f"{item['look']}, simple flat background"
+        )
+        neg = (
+            NEG.replace("nsfw, nude", "nsfw")
+            + ", sprite sheet, reference sheet, character sheet, multiple monsters, "
+            + "many creatures, two monsters, several, grid, tiles, rows, columns, "
+            + "collection, set, variations, duplicate, side by side, group, lineup, "
+            + "human, 1girl, girl, person"
+        )
+        return prompt, neg
     prompt = (
         f"pokemon game sprite, safe, cute chibi pixel art, thick black outline, "
         f"flat cel shading, full body, standing, front view, centered, "
@@ -73,7 +90,7 @@ def pixelate(img: Image.Image) -> Image.Image:
 
 
 def main():
-    items = [i for i in json.loads(PROMPTS.read_text()) if i["kind"] == "character"]
+    items = [i for i in json.loads(PROMPTS.read_text()) if i["kind"] in ("character", "enemy")]
     wanted = set(sys.argv[1:])
     if wanted:
         items = [i for i in items if i["id"] in wanted]
