@@ -20,18 +20,13 @@ const H: u32 = 680;
 // How the reveal splash is lifted off its rectangle so it melts into the dark
 // starfield (the look the menu backdrop gives its fighters).
 //
-// Primary path — background keying: flood-fill inward from the border following
-// smooth colour gradients and stop at the subject's crisp silhouette, then make
-// that connected background transparent, leaving the character/weapon floating.
-//
-// The flood only ever crosses *bright* pixels (`KEY_LUMA_MIN`). This is what
-// keeps dark outfits intact: a dark skirt against a dark scene (or reaching the
-// dark bottom edge) is a low-contrast region the colour flood would otherwise
-// wander straight into and erase. Dark backgrounds simply key too little to pass
-// `KEY_MIN_BG` and fall through to the vignette — which is fine, since a dark
-// backdrop already blends into the dark starfield without being removed.
+// Keying path — used for weapons only (see `matte_backdrop`): flood-fill inward
+// from the border following smooth colour gradients, stop at the subject's crisp
+// silhouette, and make that connected background transparent so the single object
+// floats free. It's kept off characters on purpose — a figure's bright hair or
+// dress can blend into a bright sky, and the flood would eat it — so there's no
+// dark-outfit hazard here and the key can remove any backdrop, light or dark.
 const KEY_TOL: i32 = 16; // max per-step |Δr|+|Δg|+|Δb| the flood will cross
-const KEY_LUMA_MIN: i32 = 100; // only remove pixels brighter than this (0..255)
 const KEY_MIN_BG: f32 = 0.25; // if less than this is removed, key failed → vignette
 const KEY_BLUR: i32 = 5; // soft-edge radius on the cut-out alpha, in px
 const EDGE_MARGIN: f32 = 0.05; // soft border band so effects never hard-clip at the edge
@@ -101,7 +96,9 @@ pub fn reveal_card_png(item: &Item) -> Vec<u8> {
         match image::load_from_memory(&base) {
             Ok(img) => {
                 let mut rgba = img.to_rgba8();
-                matte_backdrop(&mut rgba, item.theme.mid);
+                // Weapons are keyed to float; characters get an outskirts-only
+                // fade so bright hair/dress is never mistaken for background.
+                matte_backdrop(&mut rgba, item.theme.mid, !item.is_character());
                 encode_rgba(&rgba)
             }
             Err(_) => base,
@@ -115,17 +112,21 @@ pub fn reveal_card_png(item: &Item) -> Vec<u8> {
     out
 }
 
-/// Lift the splash off its rectangle so it blends into the starfield. Tries to
-/// key out the connected background (leaving the subject floating); if that
-/// doesn't find a clean background, falls back to a radial vignette. Either way a
-/// soft themed backlight is added behind the subject. See the `KEY_*` / `BLEND_*`
-/// / `GLOW_*` const comments for the strategies.
-fn matte_backdrop(img: &mut RgbaImage, glow: Rgb) {
+/// Lift the splash off its rectangle so it blends into the starfield, then add a
+/// soft themed backlight behind the subject.
+///
+/// Only isolated subjects (weapons) are keyed out to float free (`allow_key`);
+/// characters instead get an **outskirts-only** fade — the interior is left fully
+/// intact, so no part of the figure is ever removed. This matters because a
+/// character's bright hair or dress can match a bright sky, and a background key
+/// would happily eat it. See the `KEY_*` / `BLEND_*` / `GLOW_*` const comments.
+fn matte_backdrop(img: &mut RgbaImage, glow: Rgb, allow_key: bool) {
     let (w, h) = img.dimensions();
     if w < 4 || h < 4 {
         return;
     }
-    match background_alpha(img) {
+    let keyed = if allow_key { background_alpha(img) } else { None };
+    match keyed {
         Some(alpha) => apply_alpha_matte(img, &alpha),
         None => radial_vignette(img),
     }
@@ -187,10 +188,9 @@ fn add_glow(img: &mut RgbaImage, glow: Rgb) {
     }
 }
 
-/// Flood-fill the background inward from the border, crossing only small per-step
-/// colour changes (`KEY_TOL`) *and* only bright pixels (`KEY_LUMA_MIN`), so it
-/// follows smooth light backdrops, halts at the subject's outline, and never
-/// wanders into a dark outfit. Returns a soft 0..1 alpha (1 = keep) with the
+/// Flood-fill the background inward from every border pixel, crossing only small
+/// per-step colour changes (`KEY_TOL`) so it follows smooth gradients and halts
+/// at the subject's crisp outline. Returns a soft 0..1 alpha (1 = keep) with the
 /// cut-out edge blurred, or `None` if too little was removed to trust the key.
 fn background_alpha(img: &RgbaImage) -> Option<Vec<f32>> {
     let (w, h) = img.dimensions();
@@ -198,32 +198,30 @@ fn background_alpha(img: &RgbaImage) -> Option<Vec<f32>> {
     let hu = h as usize;
     let n = wu * hu;
 
-    // Snapshot RGB (i32) and luma for fast comparison.
+    // Snapshot RGB (i32) for fast neighbour comparison.
     let mut rgb = vec![[0i32; 3]; n];
-    let mut lum = vec![0i32; n];
     for (i, p) in img.pixels().enumerate() {
-        let (r, g, b) = (p[0] as i32, p[1] as i32, p[2] as i32);
-        rgb[i] = [r, g, b];
-        lum[i] = (299 * r + 587 * g + 114 * b) / 1000;
+        rgb[i] = [p[0] as i32, p[1] as i32, p[2] as i32];
     }
 
     let mut is_bg = vec![false; n];
     let mut stack: Vec<usize> = Vec::new();
-    // Seed the border, but only where it's bright — a dark border pixel is more
-    // likely the subject (dress/legs reaching the frame) than background.
-    let seed = |i: usize, is_bg: &mut Vec<bool>, stack: &mut Vec<usize>| {
-        if !is_bg[i] && lum[i] > KEY_LUMA_MIN {
-            is_bg[i] = true;
-            stack.push(i);
-        }
-    };
+    // Seed the whole border.
     for x in 0..wu {
-        seed(x, &mut is_bg, &mut stack);
-        seed((hu - 1) * wu + x, &mut is_bg, &mut stack);
+        for &i in &[x, (hu - 1) * wu + x] {
+            if !is_bg[i] {
+                is_bg[i] = true;
+                stack.push(i);
+            }
+        }
     }
     for y in 0..hu {
-        seed(y * wu, &mut is_bg, &mut stack);
-        seed(y * wu + (wu - 1), &mut is_bg, &mut stack);
+        for &i in &[y * wu, y * wu + (wu - 1)] {
+            if !is_bg[i] {
+                is_bg[i] = true;
+                stack.push(i);
+            }
+        }
     }
 
     while let Some(i) = stack.pop() {
@@ -250,7 +248,7 @@ fn background_alpha(img: &RgbaImage) -> Option<Vec<f32>> {
             k += 1;
         }
         for &ni in &nb[..k] {
-            if !is_bg[ni] && lum[ni] > KEY_LUMA_MIN {
+            if !is_bg[ni] {
                 let d = rgb[ni];
                 if (d[0] - c[0]).abs() + (d[1] - c[1]).abs() + (d[2] - c[2]).abs() < KEY_TOL {
                     is_bg[ni] = true;

@@ -112,19 +112,21 @@ Missing assets degrade gracefully (procedural fallback card / parametric sprite)
    Serialize GPU work and do Rust/CPU work in parallel while it runs.
    `GEN_SLICE=0` disables attention slicing (~40% faster, still fits via MPS
    spill). Budget ~3–6 min per image.
-9. **Reveal splashes are keyed, not shown raw.** `art::reveal_card_png` runs
-   `matte_backdrop` (in `art.rs`): a border flood-fill removes the connected
-   background so the card blends into the starfield instead of sitting in a
-   rectangle, then a soft themed backlight (`GLOW_*`, the item's `theme.mid`) is
-   composited behind the subject (the fade-in ladder and final card share this
-   matte). The flood only crosses **bright** pixels (`KEY_LUMA_MIN`) — this is
-   load-bearing: without it the colour flood wanders from a dark background into
-   a dark outfit and erases it. So only bright backdrops (sky, pale gradients)
-   are keyed; a dark backdrop keys too little to pass `KEY_MIN_BG` and falls
-   through to a radial vignette, which is fine since dark already blends into the
-   dark starfield. It assumes Ghostty composites the transparent PNG over the
-   text drawn beneath it (positive z). If a new splash keys badly, tune
-   `KEY_TOL` / `KEY_LUMA_MIN` / `KEY_MIN_BG` and preview with `--dump-reveal`.
+9. **Reveal splashes are matted, not shown raw.** `art::reveal_card_png` runs
+   `matte_backdrop` (in `art.rs`) so the card blends into the starfield instead
+   of sitting in a rectangle, then composites a soft themed backlight (`GLOW_*`,
+   the item's `theme.mid`) behind the subject (the fade-in ladder and final card
+   share this matte). Two strategies, chosen by item kind:
+   - **Characters — outskirts-only fade** (`radial_vignette`): the interior is
+     left fully intact and only the border fades out. Do *not* background-key a
+     character — a figure's bright hair/dress blends into a bright sky and the
+     key eats it (this bug is why the split exists).
+   - **Weapons — background key** (`background_alpha`): a lone object is flood-
+     filled free of its backdrop so it floats.
+
+   It assumes Ghostty composites the transparent PNG over the text drawn beneath
+   it (positive z). Preview with `--dump-reveal`; tune `BLEND_*` (fade) /
+   `KEY_*` (key) / `GLOW_*` (backlight).
 
 ## Conventions
 
