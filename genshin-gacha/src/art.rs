@@ -22,9 +22,16 @@ const H: u32 = 680;
 //
 // Primary path — background keying: flood-fill inward from the border following
 // smooth colour gradients and stop at the subject's crisp silhouette, then make
-// that connected background transparent. This works whether the splash sits on a
-// dark scene or a bright sky, and leaves the character/weapon floating.
+// that connected background transparent, leaving the character/weapon floating.
+//
+// The flood only ever crosses *bright* pixels (`KEY_LUMA_MIN`). This is what
+// keeps dark outfits intact: a dark skirt against a dark scene (or reaching the
+// dark bottom edge) is a low-contrast region the colour flood would otherwise
+// wander straight into and erase. Dark backgrounds simply key too little to pass
+// `KEY_MIN_BG` and fall through to the vignette — which is fine, since a dark
+// backdrop already blends into the dark starfield without being removed.
 const KEY_TOL: i32 = 16; // max per-step |Δr|+|Δg|+|Δb| the flood will cross
+const KEY_LUMA_MIN: i32 = 100; // only remove pixels brighter than this (0..255)
 const KEY_MIN_BG: f32 = 0.25; // if less than this is removed, key failed → vignette
 const KEY_BLUR: i32 = 5; // soft-edge radius on the cut-out alpha, in px
 const EDGE_MARGIN: f32 = 0.05; // soft border band so effects never hard-clip at the edge
@@ -180,9 +187,10 @@ fn add_glow(img: &mut RgbaImage, glow: Rgb) {
     }
 }
 
-/// Flood-fill the background inward from every border pixel, crossing only small
-/// per-step colour changes (`KEY_TOL`) so it follows smooth gradients and halts
-/// at the subject's crisp outline. Returns a soft 0..1 alpha (1 = keep) with the
+/// Flood-fill the background inward from the border, crossing only small per-step
+/// colour changes (`KEY_TOL`) *and* only bright pixels (`KEY_LUMA_MIN`), so it
+/// follows smooth light backdrops, halts at the subject's outline, and never
+/// wanders into a dark outfit. Returns a soft 0..1 alpha (1 = keep) with the
 /// cut-out edge blurred, or `None` if too little was removed to trust the key.
 fn background_alpha(img: &RgbaImage) -> Option<Vec<f32>> {
     let (w, h) = img.dimensions();
@@ -190,30 +198,32 @@ fn background_alpha(img: &RgbaImage) -> Option<Vec<f32>> {
     let hu = h as usize;
     let n = wu * hu;
 
-    // Snapshot RGB as i32 for fast neighbour comparison.
+    // Snapshot RGB (i32) and luma for fast comparison.
     let mut rgb = vec![[0i32; 3]; n];
+    let mut lum = vec![0i32; n];
     for (i, p) in img.pixels().enumerate() {
-        rgb[i] = [p[0] as i32, p[1] as i32, p[2] as i32];
+        let (r, g, b) = (p[0] as i32, p[1] as i32, p[2] as i32);
+        rgb[i] = [r, g, b];
+        lum[i] = (299 * r + 587 * g + 114 * b) / 1000;
     }
 
     let mut is_bg = vec![false; n];
     let mut stack: Vec<usize> = Vec::new();
-    // Seed the whole border.
-    for x in 0..wu {
-        for &i in &[x, (hu - 1) * wu + x] {
-            if !is_bg[i] {
-                is_bg[i] = true;
-                stack.push(i);
-            }
+    // Seed the border, but only where it's bright — a dark border pixel is more
+    // likely the subject (dress/legs reaching the frame) than background.
+    let seed = |i: usize, is_bg: &mut Vec<bool>, stack: &mut Vec<usize>| {
+        if !is_bg[i] && lum[i] > KEY_LUMA_MIN {
+            is_bg[i] = true;
+            stack.push(i);
         }
+    };
+    for x in 0..wu {
+        seed(x, &mut is_bg, &mut stack);
+        seed((hu - 1) * wu + x, &mut is_bg, &mut stack);
     }
     for y in 0..hu {
-        for &i in &[y * wu, y * wu + (wu - 1)] {
-            if !is_bg[i] {
-                is_bg[i] = true;
-                stack.push(i);
-            }
-        }
+        seed(y * wu, &mut is_bg, &mut stack);
+        seed(y * wu + (wu - 1), &mut is_bg, &mut stack);
     }
 
     while let Some(i) = stack.pop() {
@@ -240,7 +250,7 @@ fn background_alpha(img: &RgbaImage) -> Option<Vec<f32>> {
             k += 1;
         }
         for &ni in &nb[..k] {
-            if !is_bg[ni] {
+            if !is_bg[ni] && lum[ni] > KEY_LUMA_MIN {
                 let d = rgb[ni];
                 if (d[0] - c[0]).abs() + (d[1] - c[1]).abs() + (d[2] - c[2]).abs() < KEY_TOL {
                     is_bg[ni] = true;

@@ -117,10 +117,14 @@ Missing assets degrade gracefully (procedural fallback card / parametric sprite)
    background so the card blends into the starfield instead of sitting in a
    rectangle, then a soft themed backlight (`GLOW_*`, the item's `theme.mid`) is
    composited behind the subject (the fade-in ladder and final card share this
-   matte). It assumes Ghostty composites the transparent PNG over the text drawn
-   beneath it (positive z). A splash with a busy, non-uniform background makes
-   the key bail to a radial vignette; if a new splash keys badly, tune `KEY_TOL`
-   / `KEY_MIN_BG` and preview with `--dump-reveal`.
+   matte). The flood only crosses **bright** pixels (`KEY_LUMA_MIN`) — this is
+   load-bearing: without it the colour flood wanders from a dark background into
+   a dark outfit and erases it. So only bright backdrops (sky, pale gradients)
+   are keyed; a dark backdrop keys too little to pass `KEY_MIN_BG` and falls
+   through to a radial vignette, which is fine since dark already blends into the
+   dark starfield. It assumes Ghostty composites the transparent PNG over the
+   text drawn beneath it (positive z). If a new splash keys badly, tune
+   `KEY_TOL` / `KEY_LUMA_MIN` / `KEY_MIN_BG` and preview with `--dump-reveal`.
 
 ## Conventions
 
