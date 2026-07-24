@@ -38,6 +38,11 @@ locally and committed.
 None of this can be checked headlessly — worth a pass on a real terminal:
 
 - Wish cinematic: flicker (double-buffer fix), pacing, the fade-in dissolve.
+- Reveal splashes are now background-keyed to transparent so they blend into the
+  starfield (like the menu art) instead of showing as a solid rectangle. Confirm
+  Ghostty composites the transparent PNG over the ASCII stars / gold dust as
+  expected, and that the flood-fill key reads cleanly at cell size. Preview the
+  matted cards headlessly with `--dump-reveal`.
 - Sprite attack bounce — relies on re-placing an image at a new cursor position
   replacing the old placement. If it double-images instead, delete the id first.
 - 2v2 battle layout at various window sizes (needs ≥76×26; shows a

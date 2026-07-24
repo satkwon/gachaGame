@@ -31,6 +31,7 @@ the Read tool:
 ./target/release/wish --export-prompts > prompts.json
 ./target/release/wish --dump-fx <dir>               # wish cinematic frames
 ./target/release/wish --dump-fade <id> <dir>        # splash fade-in ladder
+./target/release/wish --dump-reveal <dir>           # matted reveal splashes (transparent bg)
 ./target/release/wish --dump-menu <file.png>        # composited menu backdrop
 ./target/release/wish --dump-pixels <dir>           # character pixel sprites
 ```
@@ -111,6 +112,15 @@ Missing assets degrade gracefully (procedural fallback card / parametric sprite)
    Serialize GPU work and do Rust/CPU work in parallel while it runs.
    `GEN_SLICE=0` disables attention slicing (~40% faster, still fits via MPS
    spill). Budget ~3–6 min per image.
+9. **Reveal splashes are keyed, not shown raw.** `art::reveal_card_png` runs
+   `matte_backdrop` (in `art.rs`): a border flood-fill removes the connected
+   background so the card blends into the starfield instead of sitting in a
+   rectangle, then a soft themed backlight (`GLOW_*`, the item's `theme.mid`) is
+   composited behind the subject (the fade-in ladder and final card share this
+   matte). It assumes Ghostty composites the transparent PNG over the text drawn
+   beneath it (positive z). A splash with a busy, non-uniform background makes
+   the key bail to a radial vignette; if a new splash keys badly, tune `KEY_TOL`
+   / `KEY_MIN_BG` and preview with `--dump-reveal`.
 
 ## Conventions
 

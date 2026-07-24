@@ -409,7 +409,9 @@ impl Stage {
         self.clear_all();
         self.draw_stars(0, 0.4);
 
-        let png = art::card_png(item);
+        // Feathered so the splash melts into the starfield rather than sitting
+        // in a hard rectangle.
+        let png = art::reveal_card_png(item);
         let img_col = self.w.saturating_sub(self.img_cols) / 2;
         let (ic, ir) = (self.img_cols, self.img_rows);
         self.fade_in_portrait(item, &png, img_col, 1, ic, ir);
@@ -517,7 +519,8 @@ impl Stage {
         // 3. The portrait.
         self.clear_all();
         self.draw_gold_dust(0);
-        let png = art::card_png(item);
+        // Feathered so the 5★ splash dissolves into the swirling gold dust.
+        let png = art::reveal_card_png(item);
         let img_col = self.w.saturating_sub(self.img_cols) / 2;
         let (ic, ir) = (self.img_cols, self.img_rows);
         self.fade_in_portrait(item, &png, img_col, 1, ic, ir);
