@@ -30,11 +30,25 @@ const KEY_TOL: i32 = 16; // max per-step |Δr|+|Δg|+|Δb| the flood will cross
 const KEY_MIN_BG: f32 = 0.25; // if less than this is removed, key failed → vignette
 const KEY_BLUR: i32 = 5; // soft-edge radius on the cut-out alpha, in px
 const EDGE_MARGIN: f32 = 0.05; // soft border band so effects never hard-clip at the edge
+// The flood can't reach background *enclosed* by the subject (e.g. the gap
+// inside a bow), which leaves a bright pocket. On a bright backdrop, also remove
+// any leftover pixel close to the border's background colour. Gated on
+// brightness so a dark weapon part can't match a dark backdrop and be erased.
+const POCKET_GATE: i32 = 110; // only run this pass when the backdrop luma exceeds this
+const POCKET_TOL: i32 = 70; // colour distance to the backdrop still counted as background
 
-// A soft themed backlight composited *behind* the keyed subject, so it emanates
-// a gentle aura in its element colour instead of floating on flat black.
-const GLOW_MAX: f32 = 0.24; // peak added alpha of the halo
-const GLOW_RADIUS: f32 = 0.52; // halo radius as a fraction of the larger side
+// A soft themed backlight composited *behind* the subject, so it emanates a
+// gentle aura in its element colour instead of floating on flat black.
+const GLOW_MAX: f32 = 0.24; // peak added alpha of the radial halo (characters)
+const GLOW_RADIUS: f32 = 0.52; // radial halo radius as a fraction of the larger side
+
+// Weapons instead get a rim glow that hugs the object's silhouette, so a dark
+// blade separates from the dark starfield with a bright outline rather than
+// vanishing into it (the diffuse radial halo can't do this for a thin shape).
+const RIM_SPREAD: i32 = 9; // halo blur radius, in px — tight so it traces the edge
+const RIM_GAIN: f32 = 2.4; // how strongly the blurred silhouette becomes halo alpha
+const RIM_CAP: f32 = 0.58; // max halo alpha
+const RIM_TINT: f32 = 0.45; // lerp of the theme colour toward white for a luminous rim
 
 // Fallback path — radial vignette, used when no clean background is found (busy
 // or non-uniform backdrop). Distance is measured from the card centre, ~1.0 at
@@ -126,14 +140,56 @@ fn matte_backdrop(img: &mut RgbaImage, glow: Rgb, allow_key: bool) {
         return;
     }
     let keyed = if allow_key { background_alpha(img) } else { None };
-    match keyed {
-        Some(alpha) => apply_alpha_matte(img, &alpha),
-        None => radial_vignette(img),
-    }
     // Glow first (it can spill past the card), then feather the border so both
     // the subject and its halo fade out at the frame instead of hard-clipping.
-    add_glow(img, glow);
+    // Keyed subjects (weapons) get a silhouette rim for contrast; the
+    // outskirts-faded characters get a soft radial aura.
+    match keyed {
+        Some(alpha) => {
+            apply_alpha_matte(img, &alpha);
+            silhouette_glow(img, glow);
+        }
+        None => {
+            radial_vignette(img);
+            add_glow(img, glow);
+        }
+    }
     feather_border(img);
+}
+
+/// Composite a rim glow that hugs a keyed subject's silhouette, *underneath* it
+/// (straight-alpha "subject over glow"). The alpha coverage is blurred so it
+/// spreads past the object's outline; that spill, tinted a luminous version of
+/// the theme colour, becomes a bright halo tracing the shape — enough to lift a
+/// dark blade off the dark starfield. Opaque subject pixels are untouched.
+fn silhouette_glow(img: &mut RgbaImage, glow: Rgb) {
+    let (w, h) = img.dimensions();
+    let n = (w * h) as usize;
+    let mut cov = vec![0f32; n];
+    for (i, p) in img.pixels().enumerate() {
+        cov[i] = p[3] as f32 / 255.0;
+    }
+    let mut spread = cov.clone();
+    box_blur(&mut spread, w as usize, h as usize, RIM_SPREAD);
+
+    let rim = glow.lerp(Rgb::new(255, 255, 255), RIM_TINT);
+    let (rr, rg, rb) = (rim.r as f32, rim.g as f32, rim.b as f32);
+    for (i, p) in img.pixels_mut().enumerate() {
+        let a_s = cov[i];
+        let a_g = (spread[i] * RIM_GAIN).min(RIM_CAP);
+        if a_g <= 0.0 {
+            continue;
+        }
+        let a_out = a_s + a_g * (1.0 - a_s);
+        if a_out <= 0.0 {
+            continue;
+        }
+        let mix = |s: u8, g: f32| ((s as f32 * a_s + g * a_g * (1.0 - a_s)) / a_out) as u8;
+        p[0] = mix(p[0], rr);
+        p[1] = mix(p[1], rg);
+        p[2] = mix(p[2], rb);
+        p[3] = (a_out * 255.0) as u8;
+    }
 }
 
 /// Composite a soft radial halo in `glow`, centred on the subject, *underneath*
@@ -188,10 +244,32 @@ fn add_glow(img: &mut RgbaImage, glow: Rgb) {
     }
 }
 
+/// Per-channel median colour of the image's border ring — a robust estimate of
+/// the background colour (robust to a subject clipping one edge).
+fn border_median(rgb: &[[i32; 3]], w: usize, h: usize) -> [i32; 3] {
+    let mut idx: Vec<usize> = Vec::with_capacity(2 * (w + h));
+    for x in 0..w {
+        idx.push(x);
+        idx.push((h - 1) * w + x);
+    }
+    for y in 0..h {
+        idx.push(y * w);
+        idx.push(y * w + (w - 1));
+    }
+    let mut out = [0i32; 3];
+    for c in 0..3 {
+        let mut vals: Vec<i32> = idx.iter().map(|&i| rgb[i][c]).collect();
+        vals.sort_unstable();
+        out[c] = vals[vals.len() / 2];
+    }
+    out
+}
+
 /// Flood-fill the background inward from every border pixel, crossing only small
 /// per-step colour changes (`KEY_TOL`) so it follows smooth gradients and halts
-/// at the subject's crisp outline. Returns a soft 0..1 alpha (1 = keep) with the
-/// cut-out edge blurred, or `None` if too little was removed to trust the key.
+/// at the subject's crisp outline. Then, on bright backdrops, clear any enclosed
+/// background pockets the flood couldn't reach. Returns a soft 0..1 alpha
+/// (1 = keep) with the cut-out edge blurred, or `None` if too little was removed.
 fn background_alpha(img: &RgbaImage) -> Option<Vec<f32>> {
     let (w, h) = img.dimensions();
     let wu = w as usize;
@@ -254,6 +332,64 @@ fn background_alpha(img: &RgbaImage) -> Option<Vec<f32>> {
                     is_bg[ni] = true;
                     stack.push(ni);
                 }
+            }
+        }
+    }
+
+    // Second pass: clear background pockets the flood couldn't reach (see the
+    // POCKET_* comments). Only on a bright backdrop, so dark weapon parts survive.
+    let bg_ref = border_median(&rgb, wu, hu);
+    let ref_luma = (299 * bg_ref[0] + 587 * bg_ref[1] + 114 * bg_ref[2]) / 1000;
+    if ref_luma > POCKET_GATE {
+        for i in 0..n {
+            if !is_bg[i] {
+                let d = rgb[i];
+                if (d[0] - bg_ref[0]).abs() + (d[1] - bg_ref[1]).abs() + (d[2] - bg_ref[2]).abs()
+                    < POCKET_TOL
+                {
+                    is_bg[i] = true;
+                }
+            }
+        }
+    }
+
+    // Third pass: drop stray specks. Isolated bright grain in the backdrop that
+    // the flood couldn't cross stays "kept", and the rim glow blooms each speck
+    // into haze. Keep only sizeable connected regions (the object itself).
+    let min_keep = (n / 5000).max(48);
+    let mut visited = vec![false; n];
+    let mut comp: Vec<usize> = Vec::new();
+    for start in 0..n {
+        if is_bg[start] || visited[start] {
+            continue;
+        }
+        comp.clear();
+        visited[start] = true;
+        let mut cstack = vec![start];
+        while let Some(i) = cstack.pop() {
+            comp.push(i);
+            let x = i % wu;
+            let y = i / wu;
+            if x > 0 && !is_bg[i - 1] && !visited[i - 1] {
+                visited[i - 1] = true;
+                cstack.push(i - 1);
+            }
+            if x + 1 < wu && !is_bg[i + 1] && !visited[i + 1] {
+                visited[i + 1] = true;
+                cstack.push(i + 1);
+            }
+            if y > 0 && !is_bg[i - wu] && !visited[i - wu] {
+                visited[i - wu] = true;
+                cstack.push(i - wu);
+            }
+            if y + 1 < hu && !is_bg[i + wu] && !visited[i + wu] {
+                visited[i + wu] = true;
+                cstack.push(i + wu);
+            }
+        }
+        if comp.len() < min_keep {
+            for &i in &comp {
+                is_bg[i] = true;
             }
         }
     }
