@@ -60,6 +60,173 @@ pub fn pixel_by_id(id: &str) -> Option<Vec<u8>> {
     load_pixel_asset(id)
 }
 
+/// Cached fade-in ladders for splash reveals.
+static FADES: Mutex<Option<HashMap<String, std::sync::Arc<Vec<Vec<u8>>>>>> = Mutex::new(None);
+
+/// Progressively brighter versions of an item's splash, from near-black to
+/// full, so the reveal can dissolve in instead of popping. Downscaled (the card
+/// is shown in a small cell box anyway) so encoding stays fast; cached per item.
+pub fn fade_in_frames(item: &Item, steps: usize) -> std::sync::Arc<Vec<Vec<u8>>> {
+    let key = format!("{}:{steps}", item.id);
+    {
+        let mut guard = FADES.lock().unwrap();
+        let map = guard.get_or_insert_with(HashMap::new);
+        if let Some(v) = map.get(&key) {
+            return v.clone();
+        }
+    }
+
+    let base = card_png(item);
+    let mut out: Vec<Vec<u8>> = Vec::with_capacity(steps);
+    if let Ok(img) = image::load_from_memory(&base) {
+        // Match roughly the on-screen size; more than enough for the cell box.
+        let small = img.resize(420, 620, FilterType::Triangle).to_rgba8();
+        for s in 0..steps {
+            // Ease-in so it blooms up gently.
+            let t = (s + 1) as f32 / steps as f32;
+            let f = t * t;
+            let mut frame = small.clone();
+            for p in frame.pixels_mut() {
+                p[0] = (p[0] as f32 * f) as u8;
+                p[1] = (p[1] as f32 * f) as u8;
+                p[2] = (p[2] as f32 * f) as u8;
+            }
+            out.push(encode_rgba(&frame));
+        }
+    }
+    let arc = std::sync::Arc::new(out);
+    let mut guard = FADES.lock().unwrap();
+    guard.get_or_insert_with(HashMap::new).insert(key, arc.clone());
+    arc
+}
+
+/// A battle backdrop scene (`scene_goblin`, `scene_shadow_dragon`, …), darkened
+/// so the sprites and UI panels stay readable on top. Cached after first load.
+pub fn scene_by_id(id: &str) -> Option<Vec<u8>> {
+    let key = format!("scene:{id}");
+    {
+        let mut guard = CACHE.lock().unwrap();
+        let map = guard.get_or_insert_with(HashMap::new);
+        if let Some(b) = map.get(&key) {
+            return Some(b.clone());
+        }
+    }
+    let bytes = std::fs::read(format!("assets/scenes/{id}.png")).ok()?;
+    let img = image::load_from_memory(&bytes).ok()?;
+    let mut rgba = img.to_rgba8();
+    for p in rgba.pixels_mut() {
+        // Dim + cool it slightly so foreground art reads clearly.
+        p[0] = (p[0] as f32 * 0.46) as u8;
+        p[1] = (p[1] as f32 * 0.46) as u8;
+        p[2] = (p[2] as f32 * 0.54) as u8;
+    }
+    let out = encode_rgba(&rgba);
+    let mut guard = CACHE.lock().unwrap();
+    guard.get_or_insert_with(HashMap::new).insert(key, out.clone());
+    Some(out)
+}
+
+/// A decorated menu backdrop: a starry gradient with a few character sprites
+/// composited into the lower corners. Rendered once and cached.
+pub fn menu_backdrop(featured: &[&str]) -> Vec<u8> {
+    let key = "menu_backdrop".to_string();
+    {
+        let mut guard = CACHE.lock().unwrap();
+        let map = guard.get_or_insert_with(HashMap::new);
+        if let Some(b) = map.get(&key) {
+            return b.clone();
+        }
+    }
+
+    const MW: u32 = 960;
+    const MH: u32 = 540;
+    let mut img = RgbaImage::new(MW, MH);
+
+    // Deep night gradient.
+    let top = Rgb::new(9, 11, 26);
+    let bot = Rgb::new(44, 26, 70);
+    for y in 0..MH {
+        let c = top.lerp(bot, y as f32 / MH as f32);
+        for x in 0..MW {
+            img.put_pixel(x, y, image::Rgba([c.r, c.g, c.b, 255]));
+        }
+    }
+
+    // Soft central aura + stars.
+    let add = |img: &mut RgbaImage, x: i32, y: i32, c: Rgb, a: f32| {
+        if x < 0 || y < 0 || x >= MW as i32 || y >= MH as i32 {
+            return;
+        }
+        let p = img.get_pixel_mut(x as u32, y as u32);
+        let f = |o: u8, n: u8| (o as f32 + n as f32 * a).clamp(0.0, 255.0) as u8;
+        p[0] = f(p[0], c.r);
+        p[1] = f(p[1], c.g);
+        p[2] = f(p[2], c.b);
+    };
+    let (cx, cy, rad) = (MW as f32 * 0.5, MH as f32 * 0.42, MH as f32 * 0.85);
+    for y in 0..MH as i32 {
+        for x in 0..MW as i32 {
+            let d = (((x as f32 - cx).powi(2)) + ((y as f32 - cy).powi(2))).sqrt() / rad;
+            if d < 1.0 {
+                let f = (1.0 - d).powi(2);
+                add(&mut img, x, y, Rgb::new(120, 90, 210), f * 0.35);
+            }
+        }
+    }
+    let mut seed: u32 = 0x2468_ACE1;
+    let mut rng = || {
+        seed ^= seed << 13;
+        seed ^= seed >> 17;
+        seed ^= seed << 5;
+        seed
+    };
+    for _ in 0..320 {
+        let x = (rng() % MW) as i32;
+        let y = (rng() % MH) as i32;
+        let b = 0.25 + (rng() % 100) as f32 / 130.0;
+        add(&mut img, x, y, Rgb::new(225, 230, 255), b);
+        add(&mut img, x + 1, y, Rgb::new(225, 230, 255), b * 0.35);
+    }
+
+    // Two fighters facing off — splash art, composited into the outer thirds.
+    // Each fades out toward the centre so the menu panel never hides them.
+    let cw = MW * 2 / 5;
+    for (n, id) in featured.iter().take(2).enumerate() {
+        let left = n == 0;
+        let Ok(bytes) = std::fs::read(format!("assets/portraits/{id}.png")) else {
+            continue;
+        };
+        let Ok(dynimg) = image::load_from_memory(&bytes) else {
+            continue;
+        };
+        let slab = dynimg.resize_to_fill(cw, MH, FilterType::Lanczos3).to_rgba8();
+        // Mirror the right-hand fighter so the pair face each other.
+        let slab = if left { slab } else { image::imageops::flip_horizontal(&slab) };
+        let ox = if left { 0 } else { MW - cw };
+        for (sx, sy, px) in slab.enumerate_pixels() {
+            let t = sx as f32 / cw as f32;
+            // Opaque on the outer half, fading to nothing toward the centre.
+            let a = if left { (1.0 - t) * 2.0 } else { t * 2.0 }.clamp(0.0, 1.0);
+            if a <= 0.0 {
+                continue;
+            }
+            let (dx, dy) = (ox + sx, sy);
+            if dx >= MW || dy >= MH {
+                continue;
+            }
+            let d = img.get_pixel_mut(dx, dy);
+            // Slightly dimmed so the centred menu text stays dominant.
+            let mix = |o: u8, s: u8| (o as f32 * (1.0 - a) + s as f32 * 0.88 * a) as u8;
+            *d = image::Rgba([mix(d[0], px[0]), mix(d[1], px[1]), mix(d[2], px[2]), 255]);
+        }
+    }
+
+    let bytes = encode_rgba(&img);
+    let mut guard = CACHE.lock().unwrap();
+    guard.get_or_insert_with(HashMap::new).insert(key, bytes.clone());
+    bytes
+}
+
 /// A hand-authored pixel-art bust for the collection grid — an original sprite
 /// drawn from each character's palette and hairstyle (inspired by, not scaled
 /// from, the splash). Weapons fall back to a downscaled card.

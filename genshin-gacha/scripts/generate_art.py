@@ -84,6 +84,12 @@ def build(item):
     return prompt, NEG_WEAPON
 
 
+SCENE_NEG = (
+    "people, person, human, girl, boy, character, creature, monster, portrait, "
+    "text, watermark, signature, blurry, lowres, ui, hud"
+)
+
+
 def main():
     items = json.loads(PROMPTS.read_text())
     # Enemies get pixel sprites only (generate_pixel.py), not splashes.
@@ -106,20 +112,35 @@ def main():
     pipe.set_progress_bar_config(disable=True)
     print(f"Model ready in {time.time() - t0:.0f}s. Generating {len(items)} images.", flush=True)
 
+    scenes_dir = ROOT / "assets" / "scenes"
     for n, item in enumerate(items, 1):
-        prompt, neg = build(item)
+        is_scene = item["kind"] == "scene"
+        if is_scene:
+            # Landscape backdrop, no characters at all.
+            prompt = (
+                f"fantasy game battle background, wide scenic landscape, {item['look']}, "
+                f"atmospheric lighting, detailed environment art, no humans, no characters"
+            )
+            neg = SCENE_NEG
+            w, h = 1216, 832
+            out_dir = scenes_dir
+        else:
+            prompt, neg = build(item)
+            w, h = WIDTH, HEIGHT
+            out_dir = OUT
+        out_dir.mkdir(parents=True, exist_ok=True)
         gen = torch.Generator(device="cpu").manual_seed(seed_for(item["id"]))
         t = time.time()
         image = pipe(
             prompt=prompt,
             negative_prompt=neg,
-            width=WIDTH,
-            height=HEIGHT,
+            width=w,
+            height=h,
             num_inference_steps=STEPS,
             guidance_scale=GUIDANCE,
             generator=gen,
         ).images[0]
-        path = OUT / f"{item['id']}.png"
+        path = out_dir / f"{item['id']}.png"
         image.save(path)
         print(f"[{n}/{len(items)}] {item['id']:<20} {time.time() - t:5.1f}s -> {path}", flush=True)
 

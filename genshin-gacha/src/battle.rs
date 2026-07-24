@@ -254,6 +254,8 @@ pub struct Enemy {
     pub boss: bool,
     pub reward: u64, // primogems on victory
     pub look: &'static str,
+    /// Landscape prompt for this enemy's battle backdrop.
+    pub scene: &'static str,
 }
 
 pub const ENEMIES: &[Enemy] = &[
@@ -264,6 +266,7 @@ pub const ENEMIES: &[Enemy] = &[
         hp: 150, mp: 40, atk: 30, def: 18, spd: 20, boss: false, reward: 60,
         look: "a cute round green slime monster, glossy translucent body, big simple eyes, \
                small and squishy",
+        scene: "a lush green forest clearing with mossy boulders, ferns and dappled sunlight",
     },
     Enemy {
         id: "goblin",
@@ -272,6 +275,7 @@ pub const ENEMIES: &[Enemy] = &[
         hp: 175, mp: 40, atk: 36, def: 22, spd: 28, boss: false, reward: 90,
         look: "a small green-skinned goblin, pointy ears, sharp teeth, tattered leather armor, \
                wielding a crude wooden club, menacing grin",
+        scene: "a goblin war camp at dusk, crude wooden palisades, tattered banners and campfires",
     },
     Enemy {
         id: "skeleton",
@@ -280,6 +284,7 @@ pub const ENEMIES: &[Enemy] = &[
         hp: 200, mp: 45, atk: 38, def: 28, spd: 24, boss: false, reward: 120,
         look: "an undead skeleton warrior, glowing blue eye sockets, rusted iron sword and round \
                shield, tattered cloak",
+        scene: "an ancient crumbling crypt, stone sarcophagi, cobwebs and cold blue torchlight",
     },
     Enemy {
         id: "flame_imp",
@@ -288,6 +293,7 @@ pub const ENEMIES: &[Enemy] = &[
         hp: 165, mp: 55, atk: 42, def: 20, spd: 36, boss: false, reward: 130,
         look: "a small red fire imp demon, little curved horns, pointed tail, hands wreathed in \
                flame, mischievous grin",
+        scene: "a volcanic cavern with glowing lava flows, cracked obsidian rock and floating embers",
     },
     Enemy {
         id: "frost_wraith",
@@ -296,6 +302,7 @@ pub const ENEMIES: &[Enemy] = &[
         hp: 190, mp: 60, atk: 40, def: 22, spd: 30, boss: false, reward: 150,
         look: "a ghostly floating frost wraith, tattered pale-blue robes, hollow glowing eyes, \
                icy skeletal claws, drifting cold mist",
+        scene: "a frozen wasteland of jagged ice spires and drifting snow beneath a pale aurora",
     },
     Enemy {
         id: "shadow_dragon",
@@ -304,6 +311,7 @@ pub const ENEMIES: &[Enemy] = &[
         hp: 320, mp: 80, atk: 50, def: 32, spd: 34, boss: true, reward: 400,
         look: "a large black shadow dragon, glowing violet eyes, vast tattered wings, crackling \
                dark-purple energy, fearsome and imposing",
+        scene: "a vast dragon's lair, cathedral-sized obsidian cavern with a golden treasure hoard and violet glow",
     },
 ];
 

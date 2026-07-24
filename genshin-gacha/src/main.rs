@@ -57,7 +57,29 @@ fn main() {
                     "rarity": if e.boss { 5 } else { 4 },
                     "look": e.look,
                 }));
+                items.push(serde_json::json!({
+                    "id": format!("scene_{}", e.id),
+                    "name": format!("{} arena", e.name),
+                    "kind": "scene",
+                    "rarity": 4,
+                    "look": e.scene,
+                }));
             }
+            // Menu key art: Guren and Yukihana mid-clash, composited left/right.
+            items.push(serde_json::json!({
+                "id": "menu_guren", "name": "Guren (menu)", "kind": "character",
+                "element": "Pyro", "weapon": "Catalyst", "rarity": 5,
+                "look": "1girl, solo, long crimson red hair, amber eyes, red and gold flowing \
+                         kimono dress, dynamic action pose, lunging forward mid-attack, hurling a \
+                         blast of roaring fire, sparks and embers, fierce battle expression",
+            }));
+            items.push(serde_json::json!({
+                "id": "menu_yukihana", "name": "Yukihana (menu)", "kind": "character",
+                "element": "Cryo", "weapon": "Sword", "rarity": 5,
+                "look": "1girl, solo, very long white hair, pale blue eyes, ornate white and \
+                         ice-blue dress, dynamic action pose, swinging a glowing crystalline ice \
+                         sword forward mid-strike, shards of ice and snow, fierce battle expression",
+            }));
             println!("{}", serde_json::to_string_pretty(&items).unwrap());
             return;
         }
@@ -81,6 +103,24 @@ fn main() {
                 std::fs::write(&path, &png).ok();
                 println!("wrote {path} ({} bytes)", png.len());
             }
+            return;
+        }
+        Some("--dump-menu") => {
+            let path = args.get(1).map(|s| s.as_str()).unwrap_or("menu-bg.png");
+            let png = art::menu_backdrop(&["menu_guren", "menu_yukihana"]);
+            std::fs::write(path, &png).ok();
+            println!("wrote {path} ({} bytes)", png.len());
+            return;
+        }
+        Some("--dump-fade") => {
+            let id = args.get(1).map(|s| s.as_str()).unwrap_or("guren");
+            let dir = args.get(2).map(|s| s.as_str()).unwrap_or("fade-preview");
+            std::fs::create_dir_all(dir).ok();
+            let frames = art::fade_in_frames(data::item(id), 6);
+            for (i, f) in frames.iter().enumerate() {
+                std::fs::write(format!("{dir}/fade_{i}.png"), f).ok();
+            }
+            println!("wrote {} fade frames to {dir}", frames.len());
             return;
         }
         Some("--dump-fx") => {

@@ -179,11 +179,25 @@
     "rarity": 4
   },
   {
+    "id": "scene_slime",
+    "kind": "scene",
+    "look": "a lush green forest clearing with mossy boulders, ferns and dappled sunlight",
+    "name": "Verdant Slime arena",
+    "rarity": 4
+  },
+  {
     "element": "Geo",
     "id": "enemy_goblin",
     "kind": "enemy",
     "look": "a small green-skinned goblin, pointy ears, sharp teeth, tattered leather armor, wielding a crude wooden club, menacing grin",
     "name": "Goblin Raider",
+    "rarity": 4
+  },
+  {
+    "id": "scene_goblin",
+    "kind": "scene",
+    "look": "a goblin war camp at dusk, crude wooden palisades, tattered banners and campfires",
+    "name": "Goblin Raider arena",
     "rarity": 4
   },
   {
@@ -195,11 +209,25 @@
     "rarity": 4
   },
   {
+    "id": "scene_skeleton",
+    "kind": "scene",
+    "look": "an ancient crumbling crypt, stone sarcophagi, cobwebs and cold blue torchlight",
+    "name": "Skeleton Knight arena",
+    "rarity": 4
+  },
+  {
     "element": "Pyro",
     "id": "enemy_flame_imp",
     "kind": "enemy",
     "look": "a small red fire imp demon, little curved horns, pointed tail, hands wreathed in flame, mischievous grin",
     "name": "Flame Imp",
+    "rarity": 4
+  },
+  {
+    "id": "scene_flame_imp",
+    "kind": "scene",
+    "look": "a volcanic cavern with glowing lava flows, cracked obsidian rock and floating embers",
+    "name": "Flame Imp arena",
     "rarity": 4
   },
   {
@@ -211,11 +239,43 @@
     "rarity": 4
   },
   {
+    "id": "scene_frost_wraith",
+    "kind": "scene",
+    "look": "a frozen wasteland of jagged ice spires and drifting snow beneath a pale aurora",
+    "name": "Frost Wraith arena",
+    "rarity": 4
+  },
+  {
     "element": "Electro",
     "id": "enemy_shadow_dragon",
     "kind": "enemy",
     "look": "a large black shadow dragon, glowing violet eyes, vast tattered wings, crackling dark-purple energy, fearsome and imposing",
     "name": "Shadow Dragon",
     "rarity": 5
+  },
+  {
+    "id": "scene_shadow_dragon",
+    "kind": "scene",
+    "look": "a vast dragon's lair, cathedral-sized obsidian cavern with a golden treasure hoard and violet glow",
+    "name": "Shadow Dragon arena",
+    "rarity": 4
+  },
+  {
+    "element": "Pyro",
+    "id": "menu_guren",
+    "kind": "character",
+    "look": "1girl, solo, long crimson red hair, amber eyes, red and gold flowing kimono dress, dynamic action pose, lunging forward mid-attack, hurling a blast of roaring fire, sparks and embers, fierce battle expression",
+    "name": "Guren (menu)",
+    "rarity": 5,
+    "weapon": "Catalyst"
+  },
+  {
+    "element": "Cryo",
+    "id": "menu_yukihana",
+    "kind": "character",
+    "look": "1girl, solo, very long white hair, pale blue eyes, ornate white and ice-blue dress, dynamic action pose, swinging a glowing crystalline ice sword forward mid-strike, shards of ice and snow, fierce battle expression",
+    "name": "Yukihana (menu)",
+    "rarity": 5,
+    "weapon": "Sword"
   }
 ]

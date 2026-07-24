@@ -249,6 +249,18 @@ pub fn wish_cinematic(rarity: Rarity) -> Vec<Vec<u8>> {
             let _ = core;
         }
 
+        // Ease the tail down to black so the hand-off to the splash art is a
+        // dissolve rather than a hard cut.
+        if t > 0.80 {
+            let f = 1.0 - ((t - 0.80) / 0.20).clamp(0.0, 1.0);
+            let f = f * f;
+            for p in img.pixels_mut() {
+                p[0] = (p[0] as f32 * f) as u8;
+                p[1] = (p[1] as f32 * f) as u8;
+                p[2] = (p[2] as f32 * f) as u8;
+            }
+        }
+
         frames.push(encode(&img));
     }
 

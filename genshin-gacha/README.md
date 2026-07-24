@@ -53,6 +53,9 @@ characters, pick two classic-fantasy foes (slime, goblin, skeleton, flame imp,
 frost wraith, and a shadow-dragon boss), all shown with pixel sprites that
 **bounce when they attack**.
 
+- **Themed arena** — the battle is fought against a backdrop matching your first
+  chosen enemy (goblin camp, crypt, volcanic cavern, frozen waste, dragon's
+  domain…), dimmed so the sprites and UI panels stay readable.
 - **Team select** — space to toggle each pick, enter to confirm.
 - **Per-turn** — choose a move for each living hero, then a target; all four
   combatants act in speed order.

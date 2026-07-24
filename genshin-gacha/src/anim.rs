@@ -6,7 +6,7 @@ use std::io::{Stdout, Write};
 use std::time::{Duration, Instant};
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent};
-use crossterm::style::{Print, SetForegroundColor};
+use crossterm::style::{Print, ResetColor, SetBackgroundColor, SetForegroundColor};
 use crossterm::terminal::{self, Clear, ClearType};
 use crossterm::{cursor, queue};
 
@@ -30,6 +30,9 @@ pub struct Stage {
     /// Set when the player asks to skip straight to the results.
     skip_all: bool,
 }
+
+/// Opaque background for battle panels (info boxes, message bar, buttons).
+const PANEL_BG: Rgb = Rgb::new(14, 16, 26);
 
 enum Input {
     /// Advance / skip the current beat (space, enter).
@@ -227,17 +230,32 @@ impl Stage {
         let bell_at = frames.len() * 3 / 4;
         queue!(self.out, cursor::MoveTo(0, 0)).ok();
         self.flush();
+        // Double-buffer: draw the new frame above the old, then delete the old.
+        // The screen is never empty, so there's no flicker.
         for (i, frame) in frames.iter().enumerate() {
-            // Same image id every frame → replaced in place (no accumulation).
-            graphics::draw_png_frame(&mut self.out, frame, cols, rows, 42).ok();
+            let id = 40 + (i % 2) as u32;
+            let prev = 40 + ((i + 1) % 2) as u32;
+            queue!(self.out, cursor::MoveTo(0, 0)).ok();
+            graphics::draw_png_frame_z(&mut self.out, frame, cols, rows, id, i as i32).ok();
+            if i > 0 {
+                graphics::delete_image(&mut self.out, prev).ok();
+            }
             if best == Rarity::Five && i == bell_at {
                 self.bell_ring();
             }
-            if self.nap(38) {
+            // Ease out: the last fifth of the sequence slows down as it fades,
+            // so it settles into the reveal instead of cutting to it.
+            let tail = frames.len() * 4 / 5;
+            let ms = if i >= tail {
+                62 + (i - tail) as u64 * 26
+            } else {
+                62
+            };
+            if self.nap(ms) {
                 break;
             }
         }
-        self.nap(180);
+        self.nap(220);
         graphics::clear(&mut self.out).ok();
         self.clear_screen();
     }
@@ -350,6 +368,35 @@ impl Stage {
 
     /// Reveal one item's card with name, element and igniting stars.
     /// 5-stars are routed through the grand cutscene instead.
+    /// Dissolve a portrait in from black instead of popping it on screen.
+    fn fade_in_portrait(&mut self, item: &Item, png: &[u8], col: u16, row: u16, cols: u16, rows: u16) {
+        if !self.graphics {
+            self.ascii_placeholder(col, row, item);
+            return;
+        }
+        let fades = art::fade_in_frames(item, 6);
+        for (i, f) in fades.iter().enumerate() {
+            queue!(self.out, cursor::MoveTo(col, row)).ok();
+            self.flush();
+            let id = 60 + (i % 2) as u32;
+            let prev = 60 + ((i + 1) % 2) as u32;
+            graphics::draw_png_frame_z(&mut self.out, f, cols, rows, id, i as i32).ok();
+            if i > 0 {
+                graphics::delete_image(&mut self.out, prev).ok();
+            }
+            if self.nap(60) {
+                break;
+            }
+        }
+        // Settle on the crisp full-resolution card, then drop the fade buffers.
+        queue!(self.out, cursor::MoveTo(col, row)).ok();
+        self.flush();
+        graphics::draw_png_frame_z(&mut self.out, png, cols, rows, 62, 50).ok();
+        graphics::delete_image(&mut self.out, 60).ok();
+        graphics::delete_image(&mut self.out, 61).ok();
+        self.nap(90);
+    }
+
     pub fn reveal(&mut self, item: &Item, outcome: &WishOutcome, is_new: bool, count: u32) {
         // Player asked to skip to results — don't draw this item at all.
         if self.skip_all {
@@ -364,13 +411,8 @@ impl Stage {
 
         let png = art::card_png(item);
         let img_col = self.w.saturating_sub(self.img_cols) / 2;
-        if self.graphics {
-            queue!(self.out, cursor::MoveTo(img_col, 1)).ok();
-            self.flush();
-            graphics::draw_png(&mut self.out, &png, self.img_cols, self.img_rows).ok();
-        } else {
-            self.ascii_placeholder(img_col, 1, item);
-        }
+        let (ic, ir) = (self.img_cols, self.img_rows);
+        self.fade_in_portrait(item, &png, img_col, 1, ic, ir);
 
         let base = self.img_rows + 2;
         self.reveal_labels(item, outcome, is_new, count, base);
@@ -477,13 +519,8 @@ impl Stage {
         self.draw_gold_dust(0);
         let png = art::card_png(item);
         let img_col = self.w.saturating_sub(self.img_cols) / 2;
-        if self.graphics {
-            queue!(self.out, cursor::MoveTo(img_col, 1)).ok();
-            self.flush();
-            graphics::draw_png(&mut self.out, &png, self.img_cols, self.img_rows).ok();
-        } else {
-            self.ascii_placeholder(img_col, 1, item);
-        }
+        let (ic, ir) = (self.img_cols, self.img_rows);
+        self.fade_in_portrait(item, &png, img_col, 1, ic, ir);
 
         let base = self.img_rows + 2;
 
@@ -802,11 +839,39 @@ impl Stage {
         }
     }
 
+    /// Solid opaque panel — gives battle UI real contrast and keeps text legible
+    /// on top of the scene backdrop.
     fn fill(&mut self, col: u16, row: u16, width: u16, count: u16) {
         let blank = " ".repeat(width as usize);
         for r in 0..count {
-            self.text(col, row + r, &blank, Rgb::new(0, 0, 0));
+            if row + r >= self.h {
+                break;
+            }
+            queue!(
+                self.out,
+                cursor::MoveTo(col, row + r),
+                SetBackgroundColor(PANEL_BG.crossterm()),
+                Print(&blank),
+                ResetColor
+            )
+            .ok();
         }
+    }
+
+    /// Text drawn onto the solid panel background.
+    fn btext(&mut self, col: u16, row: u16, s: &str, fg: Rgb) {
+        if row >= self.h || col >= self.w {
+            return;
+        }
+        queue!(
+            self.out,
+            cursor::MoveTo(col, row),
+            SetBackgroundColor(PANEL_BG.crossterm()),
+            SetForegroundColor(fg.crossterm()),
+            Print(s),
+            ResetColor
+        )
+        .ok();
     }
 
     fn bar(&mut self, col: u16, row: u16, label: &str, cur: i32, max: i32, width: u16, color: Rgb) {
@@ -818,9 +883,9 @@ impl Stage {
         };
         let gauge: String = "█".repeat(filled) + &"░".repeat(width as usize - filled);
         let lw = label.chars().count() as u16;
-        self.text(col, row, label, Rgb::new(205, 210, 225));
-        self.text(col + lw, row, &gauge, color);
-        self.text(col + lw + width + 1, row, &format!("{cur}/{max}"), Rgb::new(205, 210, 225));
+        self.btext(col, row, label, Rgb::new(205, 210, 225));
+        self.btext(col + lw, row, &gauge, color);
+        self.btext(col + lw + width + 1, row, &format!("{cur}/{max}"), Rgb::new(205, 210, 225));
     }
 
     fn draw_battler_sprite(&mut self, png: Option<&[u8]>, col: u16, row: u16, cols: u16, rows: u16, accent: Rgb) {
@@ -845,14 +910,14 @@ impl Stage {
     fn draw_info(&mut self, b: &Battler, col: u16, row: u16, mp: bool) {
         self.fill(col, row, 24, if mp { 3 } else { 2 });
         let name_col = if b.alive() { Rgb::new(240, 240, 250) } else { Rgb::new(120, 120, 132) };
-        self.text(col, row, &b.name, name_col);
+        self.btext(col, row, &b.name, name_col);
         let nx = col + b.name.chars().count() as u16 + 1;
         if !b.alive() {
-            self.text(nx, row, "DOWN", Rgb::new(200, 90, 90));
+            self.btext(nx, row, "DOWN", Rgb::new(200, 90, 90));
         } else if let Some(s) = b.status {
-            self.text(nx, row, &format!("[{}]", s.tag()), s.color());
+            self.btext(nx, row, &format!("[{}]", s.tag()), s.color());
         } else {
-            self.text(nx, row, b.element.name(), b.element.color());
+            self.btext(nx, row, b.element.name(), b.element.color());
         }
         let hp_col = if b.hp * 2 > b.max_hp {
             Rgb::new(110, 210, 120)
@@ -869,7 +934,7 @@ impl Stage {
 
     fn battle_message(&mut self, msg: &str, row: u16) {
         self.fill(0, row, self.w, 1);
-        self.text(2, row, msg, Rgb::new(235, 235, 245));
+        self.btext(2, row, msg, Rgb::new(235, 235, 245));
         self.flush();
     }
 
@@ -904,20 +969,23 @@ impl Stage {
             label,
             " ".repeat((width as usize).saturating_sub(pad + label.chars().count()))
         );
-        if selected {
-            queue!(
-                self.out,
-                cursor::MoveTo(col, row),
-                crossterm::style::SetBackgroundColor(Rgb::new(255, 208, 92).crossterm()),
-                SetForegroundColor(Rgb::new(20, 20, 28).crossterm()),
-                Print(text),
-                crossterm::style::ResetColor
-            )
-            .ok();
+        // Every state gets a solid background so the grid reads as real buttons.
+        let (bg, fg) = if selected {
+            (Rgb::new(255, 206, 84), Rgb::new(18, 18, 26))
+        } else if enabled {
+            (Rgb::new(44, 52, 74), Rgb::new(232, 236, 248))
         } else {
-            let fg = if enabled { Rgb::new(228, 230, 240) } else { Rgb::new(110, 116, 135) };
-            self.text(col, row, &text, fg);
-        }
+            (Rgb::new(28, 30, 40), Rgb::new(104, 108, 126))
+        };
+        queue!(
+            self.out,
+            cursor::MoveTo(col, row),
+            SetBackgroundColor(bg.crossterm()),
+            SetForegroundColor(fg.crossterm()),
+            Print(text),
+            ResetColor
+        )
+        .ok();
     }
 
     /// 2×2 move grid. Returns Some(index) or None (back).
@@ -1059,6 +1127,15 @@ impl Stage {
         let msg_row = self.h - 4;
 
         self.clear_all();
+        // Backdrop matching the first chosen enemy (goblin camp, dragon's lair…),
+        // drawn behind everything at a negative z.
+        if self.graphics {
+            if let Some(bg) = art::scene_by_id(&format!("scene_{}", foe_defs[0].id)) {
+                queue!(self.out, cursor::MoveTo(0, 0)).ok();
+                self.flush();
+                graphics::draw_png_frame_z(&mut self.out, &bg, self.w, self.h, 300, -1).ok();
+            }
+        }
         self.center(0, "✦   B A T T L E   ✦", Rgb::new(255, 208, 92));
         for (i, png) in foe_png.iter().enumerate() {
             let (x, y) = foe_spos[i];
@@ -1077,7 +1154,7 @@ impl Stage {
         }
         self.render_team_info(&heroes, &foes, &hero_ipos, &foe_ipos);
         self.battle_message("The battle begins!", msg_row);
-        self.beat(700);
+        self.beat(1000);
 
         let alive = |team: &[Battler]| -> Vec<usize> {
             (0..team.len()).filter(|&i| team[i].alive()).collect()
@@ -1184,7 +1261,7 @@ impl Stage {
                 for line in &log {
                     self.render_team_info(&heroes, &foes, &hero_ipos, &foe_ipos);
                     self.battle_message(line, msg_row);
-                    self.beat(720);
+                    self.beat(1150);
                 }
                 self.render_team_info(&heroes, &foes, &hero_ipos, &foe_ipos);
 
@@ -1204,7 +1281,7 @@ impl Stage {
             for line in &log {
                 self.render_team_info(&heroes, &foes, &hero_ipos, &foe_ipos);
                 self.battle_message(line, msg_row);
-                self.beat(650);
+                self.beat(1000);
             }
             self.render_team_info(&heroes, &foes, &hero_ipos, &foe_ipos);
             if alive(&foes).is_empty() {

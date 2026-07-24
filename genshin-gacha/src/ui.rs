@@ -10,11 +10,17 @@ use crossterm::terminal::{self, Clear, ClearType};
 use crossterm::{cursor, execute, queue};
 
 use crate::model::Rgb;
+use crate::{art, graphics};
 
 const GOLD: Rgb = Rgb::new(255, 208, 92);
 const LIGHT: Rgb = Rgb::new(232, 234, 244);
-const GREY: Rgb = Rgb::new(130, 140, 165);
+const GREY: Rgb = Rgb::new(150, 158, 182);
 const DARK: Rgb = Rgb::new(18, 18, 26);
+/// Solid panel the menu text sits on, so it stays readable over the backdrop.
+const PANEL: Rgb = Rgb::new(16, 18, 32);
+/// Characters decorating the main menu (left and right — the centred panel
+/// would cover anything in the middle).
+const FEATURED: [&str; 2] = ["menu_guren", "menu_yukihana"];
 
 /// One selectable button, with optional detail lines shown when highlighted.
 pub struct MenuItem {
@@ -93,10 +99,55 @@ impl Ui {
         self.at(col, row, s, fg);
     }
 
+    /// Fill a solid rectangle (the panel the menu sits on).
+    fn panel(&mut self, col: u16, row: u16, width: u16, height: u16, bg: Rgb) {
+        let blank = " ".repeat(width as usize);
+        for r in 0..height {
+            queue!(
+                self.out,
+                cursor::MoveTo(col, row + r),
+                SetBackgroundColor(bg.crossterm()),
+                Print(&blank),
+                ResetColor
+            )
+            .ok();
+        }
+    }
+
+    /// Text drawn on the panel background.
+    fn at_bg(&mut self, col: u16, row: u16, s: &str, fg: Rgb) {
+        queue!(
+            self.out,
+            cursor::MoveTo(col, row),
+            SetBackgroundColor(PANEL.crossterm()),
+            SetForegroundColor(fg.crossterm()),
+            Print(s),
+            ResetColor
+        )
+        .ok();
+    }
+
+    fn center_bg(&mut self, row: u16, s: &str, fg: Rgb) {
+        let (w, _) = self.size();
+        let col = w.saturating_sub(viz_len(s) as u16) / 2;
+        self.at_bg(col, row, s, fg);
+    }
+
+    /// Draw the decorated backdrop behind everything (negative z).
+    fn draw_backdrop(&mut self) {
+        if !graphics::supported() {
+            return;
+        }
+        let (w, h) = self.size();
+        let png = art::menu_backdrop(&FEATURED);
+        queue!(self.out, cursor::MoveTo(0, 0)).ok();
+        self.out.flush().ok();
+        graphics::draw_png_frame_z(&mut self.out, &png, w, h, 900, -2).ok();
+    }
+
     fn button(&mut self, row: u16, label: &str, width: u16, selected: bool, enabled: bool) {
         let (w, _) = self.size();
         let col = w.saturating_sub(width) / 2;
-        // Center the label inside the fixed button width.
         let pad = (width as usize).saturating_sub(viz_len(label)) / 2;
         let text = format!(
             "{}{}{}",
@@ -104,20 +155,23 @@ impl Ui {
             label,
             " ".repeat((width as usize).saturating_sub(pad + viz_len(label)))
         );
-        queue!(self.out, cursor::MoveTo(col, row)).ok();
-        if selected {
-            queue!(
-                self.out,
-                SetBackgroundColor(GOLD.crossterm()),
-                SetForegroundColor(DARK.crossterm()),
-                Print(text),
-                ResetColor
-            )
-            .ok();
+        // Solid background in every state → reads as a real button.
+        let (bg, fg) = if selected {
+            (GOLD, DARK)
+        } else if enabled {
+            (Rgb::new(42, 48, 72), LIGHT)
         } else {
-            let fg = if enabled { LIGHT } else { GREY };
-            queue!(self.out, SetForegroundColor(fg.crossterm()), Print(text), ResetColor).ok();
-        }
+            (Rgb::new(26, 28, 40), Rgb::new(104, 108, 126))
+        };
+        queue!(
+            self.out,
+            cursor::MoveTo(col, row),
+            SetBackgroundColor(bg.crossterm()),
+            SetForegroundColor(fg.crossterm()),
+            Print(text),
+            ResetColor
+        )
+        .ok();
     }
 
     /// Render a titled button menu and drive it until the player picks or
@@ -138,8 +192,20 @@ impl Ui {
             .clamp(18, 60) as u16
             + 6;
 
+        // Layout is fixed for this menu, so the backdrop + panel are painted
+        // once and navigation only repaints the buttons/detail (no image
+        // re-transmit → responsive and flicker-free).
+        let (_, h) = self.size();
+        let detail_max = items.iter().map(|i| i.detail.len()).max().unwrap_or(0) as u16;
+        let hdr_h = if header.is_empty() { 0 } else { header.len() as u16 + 1 };
+        let det_h = if detail_max > 0 { detail_max + 1 } else { 0 };
+        let total = 2 + hdr_h + items.len() as u16 + 1 + det_h + 1;
+        let top = h.saturating_sub(total) / 2;
+        let btn_start = top + 2 + hdr_h;
+        let det_start = btn_start + items.len() as u16 + 1;
+        self.render_menu_full(title, header, items, sel, width, top, total, btn_start, det_start, det_h);
+
         loop {
-            self.render_menu(title, header, items, sel, width);
             match event::read() {
                 Ok(Event::Key(k)) => match k.code {
                     KeyCode::Up | KeyCode::Char('k') => {
@@ -169,38 +235,80 @@ impl Ui {
                 Ok(_) => {}
                 Err(_) => return None,
             }
+            self.render_menu_dynamic(items, sel, width, btn_start, det_start, det_h);
         }
     }
 
-    fn render_menu(&mut self, title: &str, header: &[String], items: &[MenuItem], sel: usize, width: u16) {
-        let (_, h) = self.size();
-        let detail = &items[sel].detail;
-        let hdr_h = if header.is_empty() { 0 } else { header.len() as u16 + 1 };
-        let det_h = if detail.is_empty() { 0 } else { detail.len() as u16 + 1 };
-        let total = 2 + hdr_h + items.len() as u16 + 1 + det_h + 1; // title,blank,hdr,items,blank,detail,footer
-        let mut row = h.saturating_sub(total) / 2;
-
+    /// Full paint: backdrop image, solid panel, then all the text.
+    #[allow(clippy::too_many_arguments)]
+    fn render_menu_full(
+        &mut self,
+        title: &str,
+        header: &[String],
+        items: &[MenuItem],
+        sel: usize,
+        width: u16,
+        top: u16,
+        total: u16,
+        btn_start: u16,
+        det_start: u16,
+        det_h: u16,
+    ) {
+        let (w, h) = self.size();
         queue!(self.out, Clear(ClearType::All)).ok();
-        self.center(row, title, GOLD);
-        row += 2;
+        self.draw_backdrop();
+
+        // Panel wide enough for the widest element.
+        let widest = header
+            .iter()
+            .chain(items.iter().flat_map(|i| i.detail.iter()))
+            .map(|s| viz_len(s) as u16)
+            .max()
+            .unwrap_or(0)
+            .max(width)
+            .max(viz_len(title) as u16);
+        let pw = (widest + 8).min(w.saturating_sub(2));
+        let pcol = w.saturating_sub(pw) / 2;
+        self.panel(pcol, top.saturating_sub(1), pw, total + 2, PANEL);
+
+        self.center_bg(top, title, GOLD);
+        let mut row = top + 2;
         for line in header {
-            self.center(row, line, GREY);
-            row += 1;
-        }
-        if hdr_h > 0 {
+            self.center_bg(row, line, GREY);
             row += 1;
         }
         for (i, item) in items.iter().enumerate() {
-            self.button(row, &item.label, width, i == sel, item.enabled);
-            row += 1;
+            self.button(btn_start + i as u16, &item.label, width, i == sel, item.enabled);
         }
-        row += 1;
-        for line in detail {
-            self.center(row, line, Rgb::new(180, 186, 205));
-            row += 1;
+        let _ = det_start;
+        let _ = det_h;
+        self.render_menu_dynamic(items, sel, width, btn_start, det_start, det_h);
+        self.center(h.saturating_sub(1), "↑↓ move   ·   enter select   ·   esc back", GREY);
+        self.out.flush().ok();
+    }
+
+    /// Repaint just the buttons and the selected item's detail lines.
+    fn render_menu_dynamic(
+        &mut self,
+        items: &[MenuItem],
+        sel: usize,
+        width: u16,
+        btn_start: u16,
+        det_start: u16,
+        det_h: u16,
+    ) {
+        for (i, item) in items.iter().enumerate() {
+            self.button(btn_start + i as u16, &item.label, width, i == sel, item.enabled);
         }
-        let footer = "↑↓ move   ·   enter select   ·   esc back";
-        self.center(h.saturating_sub(1), footer, GREY);
+        if det_h > 0 {
+            let (w, _) = self.size();
+            // Clear the detail block on the panel, then draw the current detail.
+            let pw = w.saturating_sub(4);
+            self.panel(2, det_start, pw, det_h, PANEL);
+            for (k, line) in items[sel].detail.iter().enumerate() {
+                self.center_bg(det_start + k as u16, line, Rgb::new(186, 192, 212));
+            }
+        }
         self.out.flush().ok();
     }
 
