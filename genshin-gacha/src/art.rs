@@ -17,6 +17,47 @@ use crate::model::{Item, ItemKind, Rgb, WeaponType};
 const W: u32 = 560;
 const H: u32 = 680;
 
+// How the reveal splash is lifted off its rectangle so it melts into the dark
+// starfield (the look the menu backdrop gives its fighters).
+//
+// Keying path — used for weapons only (see `matte_backdrop`): flood-fill inward
+// from the border following smooth colour gradients, stop at the subject's crisp
+// silhouette, and make that connected background transparent so the single object
+// floats free. It's kept off characters on purpose — a figure's bright hair or
+// dress can blend into a bright sky, and the flood would eat it — so there's no
+// dark-outfit hazard here and the key can remove any backdrop, light or dark.
+const KEY_TOL: i32 = 16; // max per-step |Δr|+|Δg|+|Δb| the flood will cross
+const KEY_MIN_BG: f32 = 0.25; // if less than this is removed, key failed → vignette
+const KEY_BLUR: i32 = 5; // soft-edge radius on the cut-out alpha, in px
+const EDGE_MARGIN: f32 = 0.05; // soft border band so effects never hard-clip at the edge
+// The flood can't reach background *enclosed* by the subject (e.g. the gap
+// inside a bow), which leaves a bright pocket. On a bright backdrop, also remove
+// any leftover pixel close to the border's background colour. Gated on
+// brightness so a dark weapon part can't match a dark backdrop and be erased.
+const POCKET_GATE: i32 = 110; // only run this pass when the backdrop luma exceeds this
+const POCKET_TOL: i32 = 70; // colour distance to the backdrop still counted as background
+
+// A soft themed backlight composited *behind* the subject, so it emanates a
+// gentle aura in its element colour instead of floating on flat black.
+const GLOW_MAX: f32 = 0.24; // peak added alpha of the radial halo (characters)
+const GLOW_RADIUS: f32 = 0.52; // radial halo radius as a fraction of the larger side
+
+// Weapons instead get a rim glow that hugs the object's silhouette, so a dark
+// blade separates from the dark starfield with a bright outline rather than
+// vanishing into it (the diffuse radial halo can't do this for a thin shape).
+const RIM_SPREAD: i32 = 9; // halo blur radius, in px — tight so it traces the edge
+const RIM_GAIN: f32 = 2.4; // how strongly the blurred silhouette becomes halo alpha
+const RIM_CAP: f32 = 0.58; // max halo alpha
+const RIM_TINT: f32 = 0.45; // lerp of the theme colour toward white for a luminous rim
+
+// Fallback path — radial vignette, used when no clean background is found (busy
+// or non-uniform backdrop). Distance is measured from the card centre, ~1.0 at
+// an edge midpoint and ~1.4 at a corner: the subject stays lit inside `CORE`,
+// everything past `EDGE` fades to transparent, and the band is pulled toward
+// black so a bright backdrop doesn't leave a glowing box.
+const BLEND_CORE: f32 = 0.62;
+const BLEND_EDGE: f32 = 1.12;
+
 static CACHE: Mutex<Option<HashMap<String, Vec<u8>>>> = Mutex::new(None);
 
 /// PNG bytes for an item's card. Prefers a real asset, falls back to procedural.
@@ -44,6 +85,406 @@ fn load_asset(id: &str) -> Option<Vec<u8>> {
     // Validate it decodes as an image before handing it to the terminal.
     image::load_from_memory(&bytes).ok()?;
     Some(bytes)
+}
+
+/// The splash used on the reveal/cutscene screen: like `card_png`, but real
+/// artwork gets a soft edge matte so it dissolves into the starfield instead of
+/// sitting in a hard rectangle. The procedural fallback keeps its own designed
+/// vignette + rarity frame (feathering it would eat the frame), so it's left as
+/// is. Cached under a separate key from the raw card.
+pub fn reveal_card_png(item: &Item) -> Vec<u8> {
+    let key = format!("reveal:{}", item.id);
+    {
+        let mut guard = CACHE.lock().unwrap();
+        let map = guard.get_or_insert_with(HashMap::new);
+        if let Some(bytes) = map.get(&key) {
+            return bytes.clone();
+        }
+    }
+
+    let base = card_png(item);
+    // Only real portraits are matted; procedural cards are drawn to sit on the
+    // starfield already.
+    let has_asset = std::path::Path::new(&format!("assets/portraits/{}.png", item.id)).exists();
+    let out = if has_asset {
+        match image::load_from_memory(&base) {
+            Ok(img) => {
+                let mut rgba = img.to_rgba8();
+                // Weapons are keyed to float; characters get an outskirts-only
+                // fade so bright hair/dress is never mistaken for background.
+                matte_backdrop(&mut rgba, item.theme.mid, !item.is_character());
+                encode_rgba(&rgba)
+            }
+            Err(_) => base,
+        }
+    } else {
+        base
+    };
+
+    let mut guard = CACHE.lock().unwrap();
+    guard.get_or_insert_with(HashMap::new).insert(key, out.clone());
+    out
+}
+
+/// Lift the splash off its rectangle so it blends into the starfield, then add a
+/// soft themed backlight behind the subject.
+///
+/// Only isolated subjects (weapons) are keyed out to float free (`allow_key`);
+/// characters instead get an **outskirts-only** fade — the interior is left fully
+/// intact, so no part of the figure is ever removed. This matters because a
+/// character's bright hair or dress can match a bright sky, and a background key
+/// would happily eat it. See the `KEY_*` / `BLEND_*` / `GLOW_*` const comments.
+fn matte_backdrop(img: &mut RgbaImage, glow: Rgb, allow_key: bool) {
+    let (w, h) = img.dimensions();
+    if w < 4 || h < 4 {
+        return;
+    }
+    let keyed = if allow_key { background_alpha(img) } else { None };
+    // Glow first (it can spill past the card), then feather the border so both
+    // the subject and its halo fade out at the frame instead of hard-clipping.
+    // Keyed subjects (weapons) get a silhouette rim for contrast; the
+    // outskirts-faded characters get a soft radial aura.
+    match keyed {
+        Some(alpha) => {
+            apply_alpha_matte(img, &alpha);
+            silhouette_glow(img, glow);
+        }
+        None => {
+            radial_vignette(img);
+            add_glow(img, glow);
+        }
+    }
+    feather_border(img);
+}
+
+/// Composite a rim glow that hugs a keyed subject's silhouette, *underneath* it
+/// (straight-alpha "subject over glow"). The alpha coverage is blurred so it
+/// spreads past the object's outline; that spill, tinted a luminous version of
+/// the theme colour, becomes a bright halo tracing the shape — enough to lift a
+/// dark blade off the dark starfield. Opaque subject pixels are untouched.
+fn silhouette_glow(img: &mut RgbaImage, glow: Rgb) {
+    let (w, h) = img.dimensions();
+    let n = (w * h) as usize;
+    let mut cov = vec![0f32; n];
+    for (i, p) in img.pixels().enumerate() {
+        cov[i] = p[3] as f32 / 255.0;
+    }
+    let mut spread = cov.clone();
+    box_blur(&mut spread, w as usize, h as usize, RIM_SPREAD);
+
+    let rim = glow.lerp(Rgb::new(255, 255, 255), RIM_TINT);
+    let (rr, rg, rb) = (rim.r as f32, rim.g as f32, rim.b as f32);
+    for (i, p) in img.pixels_mut().enumerate() {
+        let a_s = cov[i];
+        let a_g = (spread[i] * RIM_GAIN).min(RIM_CAP);
+        if a_g <= 0.0 {
+            continue;
+        }
+        let a_out = a_s + a_g * (1.0 - a_s);
+        if a_out <= 0.0 {
+            continue;
+        }
+        let mix = |s: u8, g: f32| ((s as f32 * a_s + g * a_g * (1.0 - a_s)) / a_out) as u8;
+        p[0] = mix(p[0], rr);
+        p[1] = mix(p[1], rg);
+        p[2] = mix(p[2], rb);
+        p[3] = (a_out * 255.0) as u8;
+    }
+}
+
+/// Composite a soft radial halo in `glow`, centred on the subject, *underneath*
+/// whatever is already there (straight-alpha "subject over glow"). Opaque subject
+/// pixels are untouched; the transparent background around the subject picks up a
+/// faint themed aura, so the floating art reads as backlit rather than pasted on
+/// black.
+fn add_glow(img: &mut RgbaImage, glow: Rgb) {
+    let (w, h) = img.dimensions();
+    // Alpha-weighted centroid of the subject so the halo sits behind it even
+    // when the subject is off-centre (e.g. a diagonal weapon).
+    let (mut sx, mut sy, mut sw) = (0f64, 0f64, 0f64);
+    for y in 0..h {
+        for x in 0..w {
+            let a = img.get_pixel(x, y)[3] as f64 / 255.0;
+            if a > 0.0 {
+                sx += x as f64 * a;
+                sy += y as f64 * a;
+                sw += a;
+            }
+        }
+    }
+    if sw <= 0.0 {
+        return;
+    }
+    let cx = (sx / sw) as f32;
+    let cy = (sy / sw) as f32;
+    let rad = (w.max(h) as f32 * GLOW_RADIUS).max(1.0);
+    let (gr, gg, gb) = (glow.r as f32, glow.g as f32, glow.b as f32);
+    for y in 0..h {
+        for x in 0..w {
+            let dx = x as f32 - cx;
+            let dy = y as f32 - cy;
+            let d = (dx * dx + dy * dy).sqrt() / rad;
+            if d >= 1.0 {
+                continue;
+            }
+            let f = 1.0 - d;
+            let a_g = GLOW_MAX * f * f; // smooth, zero-slope at the outer edge
+            let p = img.get_pixel_mut(x, y);
+            let a_s = p[3] as f32 / 255.0;
+            let a_out = a_s + a_g * (1.0 - a_s);
+            if a_out <= 0.0 {
+                continue;
+            }
+            let mix = |s: u8, g: f32| ((s as f32 * a_s + g * a_g * (1.0 - a_s)) / a_out) as u8;
+            p[0] = mix(p[0], gr);
+            p[1] = mix(p[1], gg);
+            p[2] = mix(p[2], gb);
+            p[3] = (a_out * 255.0) as u8;
+        }
+    }
+}
+
+/// Per-channel median colour of the image's border ring — a robust estimate of
+/// the background colour (robust to a subject clipping one edge).
+fn border_median(rgb: &[[i32; 3]], w: usize, h: usize) -> [i32; 3] {
+    let mut idx: Vec<usize> = Vec::with_capacity(2 * (w + h));
+    for x in 0..w {
+        idx.push(x);
+        idx.push((h - 1) * w + x);
+    }
+    for y in 0..h {
+        idx.push(y * w);
+        idx.push(y * w + (w - 1));
+    }
+    let mut out = [0i32; 3];
+    for c in 0..3 {
+        let mut vals: Vec<i32> = idx.iter().map(|&i| rgb[i][c]).collect();
+        vals.sort_unstable();
+        out[c] = vals[vals.len() / 2];
+    }
+    out
+}
+
+/// Flood-fill the background inward from every border pixel, crossing only small
+/// per-step colour changes (`KEY_TOL`) so it follows smooth gradients and halts
+/// at the subject's crisp outline. Then, on bright backdrops, clear any enclosed
+/// background pockets the flood couldn't reach. Returns a soft 0..1 alpha
+/// (1 = keep) with the cut-out edge blurred, or `None` if too little was removed.
+fn background_alpha(img: &RgbaImage) -> Option<Vec<f32>> {
+    let (w, h) = img.dimensions();
+    let wu = w as usize;
+    let hu = h as usize;
+    let n = wu * hu;
+
+    // Snapshot RGB (i32) for fast neighbour comparison.
+    let mut rgb = vec![[0i32; 3]; n];
+    for (i, p) in img.pixels().enumerate() {
+        rgb[i] = [p[0] as i32, p[1] as i32, p[2] as i32];
+    }
+
+    let mut is_bg = vec![false; n];
+    let mut stack: Vec<usize> = Vec::new();
+    // Seed the whole border.
+    for x in 0..wu {
+        for &i in &[x, (hu - 1) * wu + x] {
+            if !is_bg[i] {
+                is_bg[i] = true;
+                stack.push(i);
+            }
+        }
+    }
+    for y in 0..hu {
+        for &i in &[y * wu, y * wu + (wu - 1)] {
+            if !is_bg[i] {
+                is_bg[i] = true;
+                stack.push(i);
+            }
+        }
+    }
+
+    while let Some(i) = stack.pop() {
+        let c = rgb[i];
+        let x = i % wu;
+        let y = i / wu;
+        // 4-connected neighbours.
+        let mut nb = [usize::MAX; 4];
+        let mut k = 0;
+        if x > 0 {
+            nb[k] = i - 1;
+            k += 1;
+        }
+        if x + 1 < wu {
+            nb[k] = i + 1;
+            k += 1;
+        }
+        if y > 0 {
+            nb[k] = i - wu;
+            k += 1;
+        }
+        if y + 1 < hu {
+            nb[k] = i + wu;
+            k += 1;
+        }
+        for &ni in &nb[..k] {
+            if !is_bg[ni] {
+                let d = rgb[ni];
+                if (d[0] - c[0]).abs() + (d[1] - c[1]).abs() + (d[2] - c[2]).abs() < KEY_TOL {
+                    is_bg[ni] = true;
+                    stack.push(ni);
+                }
+            }
+        }
+    }
+
+    // Second pass: clear background pockets the flood couldn't reach (see the
+    // POCKET_* comments). Only on a bright backdrop, so dark weapon parts survive.
+    let bg_ref = border_median(&rgb, wu, hu);
+    let ref_luma = (299 * bg_ref[0] + 587 * bg_ref[1] + 114 * bg_ref[2]) / 1000;
+    if ref_luma > POCKET_GATE {
+        for i in 0..n {
+            if !is_bg[i] {
+                let d = rgb[i];
+                if (d[0] - bg_ref[0]).abs() + (d[1] - bg_ref[1]).abs() + (d[2] - bg_ref[2]).abs()
+                    < POCKET_TOL
+                {
+                    is_bg[i] = true;
+                }
+            }
+        }
+    }
+
+    // Third pass: drop stray specks. Isolated bright grain in the backdrop that
+    // the flood couldn't cross stays "kept", and the rim glow blooms each speck
+    // into haze. Keep only sizeable connected regions (the object itself).
+    let min_keep = (n / 5000).max(48);
+    let mut visited = vec![false; n];
+    let mut comp: Vec<usize> = Vec::new();
+    for start in 0..n {
+        if is_bg[start] || visited[start] {
+            continue;
+        }
+        comp.clear();
+        visited[start] = true;
+        let mut cstack = vec![start];
+        while let Some(i) = cstack.pop() {
+            comp.push(i);
+            let x = i % wu;
+            let y = i / wu;
+            if x > 0 && !is_bg[i - 1] && !visited[i - 1] {
+                visited[i - 1] = true;
+                cstack.push(i - 1);
+            }
+            if x + 1 < wu && !is_bg[i + 1] && !visited[i + 1] {
+                visited[i + 1] = true;
+                cstack.push(i + 1);
+            }
+            if y > 0 && !is_bg[i - wu] && !visited[i - wu] {
+                visited[i - wu] = true;
+                cstack.push(i - wu);
+            }
+            if y + 1 < hu && !is_bg[i + wu] && !visited[i + wu] {
+                visited[i + wu] = true;
+                cstack.push(i + wu);
+            }
+        }
+        if comp.len() < min_keep {
+            for &i in &comp {
+                is_bg[i] = true;
+            }
+        }
+    }
+
+    let removed = is_bg.iter().filter(|b| **b).count() as f32 / n as f32;
+    if removed < KEY_MIN_BG {
+        // Background wasn't smooth/uniform enough to key cleanly.
+        return None;
+    }
+
+    let mut alpha: Vec<f32> = is_bg.iter().map(|&b| if b { 0.0 } else { 1.0 }).collect();
+    box_blur(&mut alpha, wu, hu, KEY_BLUR); // anti-alias the cut-out edge
+    Some(alpha)
+}
+
+/// Separable clamped box blur over a single-channel f32 buffer.
+fn box_blur(a: &mut [f32], w: usize, h: usize, r: i32) {
+    if r <= 0 {
+        return;
+    }
+    let mut tmp = vec![0f32; w * h];
+    for y in 0..h {
+        for x in 0..w {
+            let x0 = (x as i32 - r).max(0) as usize;
+            let x1 = ((x as i32 + r) as usize).min(w - 1);
+            let mut s = 0.0;
+            for xx in x0..=x1 {
+                s += a[y * w + xx];
+            }
+            tmp[y * w + x] = s / (x1 - x0 + 1) as f32;
+        }
+    }
+    for x in 0..w {
+        for y in 0..h {
+            let y0 = (y as i32 - r).max(0) as usize;
+            let y1 = ((y as i32 + r) as usize).min(h - 1);
+            let mut s = 0.0;
+            for yy in y0..=y1 {
+                s += tmp[yy * w + x];
+            }
+            a[y * w + x] = s / (y1 - y0 + 1) as f32;
+        }
+    }
+}
+
+/// Multiply each pixel's alpha by the keyed matte, dropping the background out.
+fn apply_alpha_matte(img: &mut RgbaImage, alpha: &[f32]) {
+    for (i, p) in img.pixels_mut().enumerate() {
+        p[3] = (p[3] as f32 * alpha[i]) as u8;
+    }
+}
+
+/// Fade alpha to zero across a soft band at the frame edge, so nothing (subject
+/// or glow) hard-clips at the card boundary.
+fn feather_border(img: &mut RgbaImage) {
+    let (w, h) = img.dimensions();
+    let mx = (w as f32 * EDGE_MARGIN).max(1.0);
+    let my = (h as f32 * EDGE_MARGIN).max(1.0);
+    for y in 0..h {
+        let ey = (y.min(h - 1 - y) as f32 / my).clamp(0.0, 1.0);
+        for x in 0..w {
+            let ex = (x.min(w - 1 - x) as f32 / mx).clamp(0.0, 1.0);
+            let e = ex.min(ey);
+            let edge = e * e * (3.0 - 2.0 * e);
+            let p = img.get_pixel_mut(x, y);
+            p[3] = (p[3] as f32 * edge) as u8;
+        }
+    }
+}
+
+/// Fallback matte for splashes with no clean background: an elliptical vignette
+/// that keeps the centred subject lit inside `CORE`, fades to transparent by
+/// `EDGE`, and pulls the band toward black so a bright backdrop won't glow.
+fn radial_vignette(img: &mut RgbaImage) {
+    let (w, h) = img.dimensions();
+    let cx = (w - 1) as f32 / 2.0;
+    // Favour the upper body (faces sit high in these portraits).
+    let cy = (h - 1) as f32 / 2.0 * 0.92;
+    let hw = cx.max(1.0);
+    let hh = cy.max(1.0);
+    for y in 0..h {
+        let ny = (y as f32 - cy) / hh;
+        for x in 0..w {
+            let nx = (x as f32 - cx) / hw;
+            let nd = (nx * nx + ny * ny).sqrt();
+            let t = ((nd - BLEND_CORE) / (BLEND_EDGE - BLEND_CORE)).clamp(0.0, 1.0);
+            let s = 1.0 - t * t * (3.0 - 2.0 * t);
+            let dark = 0.22 + 0.78 * s;
+            let p = img.get_pixel_mut(x, y);
+            p[0] = (p[0] as f32 * dark) as u8;
+            p[1] = (p[1] as f32 * dark) as u8;
+            p[2] = (p[2] as f32 * dark) as u8;
+            p[3] = (p[3] as f32 * s) as u8;
+        }
+    }
 }
 
 /// A pre-generated detailed pixel-art sprite, if one exists.
@@ -76,7 +517,10 @@ pub fn fade_in_frames(item: &Item, steps: usize) -> std::sync::Arc<Vec<Vec<u8>>>
         }
     }
 
-    let base = card_png(item);
+    // Base off the feathered reveal card so the dissolve carries the same soft
+    // edge the final crisp card lands on (otherwise the last frame would pop
+    // from a soft vignette to a hard rectangle).
+    let base = reveal_card_png(item);
     let mut out: Vec<Vec<u8>> = Vec::with_capacity(steps);
     if let Ok(img) = image::load_from_memory(&base) {
         // Match roughly the on-screen size; more than enough for the cell box.
@@ -87,6 +531,8 @@ pub fn fade_in_frames(item: &Item, steps: usize) -> std::sync::Arc<Vec<Vec<u8>>>
             let f = t * t;
             let mut frame = small.clone();
             for p in frame.pixels_mut() {
+                // Scale only RGB toward black; the feathered alpha is preserved
+                // so the edges stay dissolved throughout the fade.
                 p[0] = (p[0] as f32 * f) as u8;
                 p[1] = (p[1] as f32 * f) as u8;
                 p[2] = (p[2] as f32 * f) as u8;

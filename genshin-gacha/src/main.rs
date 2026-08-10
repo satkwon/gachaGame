@@ -112,6 +112,20 @@ fn main() {
             println!("wrote {path} ({} bytes)", png.len());
             return;
         }
+        Some("--dump-reveal") => {
+            // The feathered splash used on the reveal/cutscene screen. Edges
+            // are matted to transparent so the card blends into the starfield;
+            // view over a dark background to judge the falloff.
+            let dir = args.get(1).map(|s| s.as_str()).unwrap_or("reveal-preview");
+            std::fs::create_dir_all(dir).ok();
+            for item in data::ROSTER {
+                let png = art::reveal_card_png(item);
+                let path = format!("{dir}/{}.png", item.id);
+                std::fs::write(&path, &png).ok();
+                println!("wrote {path} ({} bytes)", png.len());
+            }
+            return;
+        }
         Some("--dump-fade") => {
             let id = args.get(1).map(|s| s.as_str()).unwrap_or("guren");
             let dir = args.get(2).map(|s| s.as_str()).unwrap_or("fade-preview");

@@ -31,6 +31,7 @@ the Read tool:
 ./target/release/wish --export-prompts > prompts.json
 ./target/release/wish --dump-fx <dir>               # wish cinematic frames
 ./target/release/wish --dump-fade <id> <dir>        # splash fade-in ladder
+./target/release/wish --dump-reveal <dir>           # matted reveal splashes (transparent bg)
 ./target/release/wish --dump-menu <file.png>        # composited menu backdrop
 ./target/release/wish --dump-pixels <dir>           # character pixel sprites
 ```
@@ -111,6 +112,25 @@ Missing assets degrade gracefully (procedural fallback card / parametric sprite)
    Serialize GPU work and do Rust/CPU work in parallel while it runs.
    `GEN_SLICE=0` disables attention slicing (~40% faster, still fits via MPS
    spill). Budget ~3–6 min per image.
+9. **Reveal splashes are matted, not shown raw.** `art::reveal_card_png` runs
+   `matte_backdrop` (in `art.rs`) so the card blends into the starfield instead
+   of sitting in a rectangle, then composites a soft themed backlight behind the
+   subject (the fade-in ladder and final card share this matte). Two strategies,
+   chosen by item kind:
+   - **Characters — outskirts-only fade** (`radial_vignette` + radial `add_glow`):
+     the interior is left fully intact and only the border fades out. Do *not*
+     background-key a character — a figure's bright hair/dress blends into a
+     bright sky and the key eats it (this bug is why the split exists).
+   - **Weapons — background key** (`background_alpha` + `silhouette_glow`): a lone
+     object is flood-filled free of its backdrop so it floats, with a tight rim
+     glow tracing its outline so a dark blade stands out on the dark starfield.
+     Keying has two cleanup passes: clear enclosed background pockets the flood
+     can't reach (bright backdrops only, gated on luma so dark blades survive),
+     and drop stray specks so the rim glow doesn't bloom off background grain.
+
+   It assumes Ghostty composites the transparent PNG over the text drawn beneath
+   it (positive z). Preview with `--dump-reveal`; tune `BLEND_*` (character fade)
+   / `KEY_*`,`POCKET_*` (weapon key) / `GLOW_*`,`RIM_*` (backlight).
 
 ## Conventions
 
